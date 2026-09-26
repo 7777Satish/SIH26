@@ -11,10 +11,13 @@ static bool inside(int x, int y, int width, int height)
     return mouse_x >= x && mouse_x <= x + width && mouse_y >= y && mouse_y <= y + height;
 }
 
-void GUI_Begin(void)
+void GUI_Begin(SDL_Renderer *renderer)
 {
+    float window_x;
+    float window_y;
     previous_mouse_down = mouse_down;
-    mouse_down = (SDL_GetMouseState(&mouse_x, &mouse_y) & SDL_BUTTON_LMASK) != 0;
+    mouse_down = (SDL_GetMouseState(&window_x, &window_y) & SDL_BUTTON_LMASK) != 0;
+    SDL_RenderCoordinatesFromWindow(renderer, window_x, window_y, &mouse_x, &mouse_y);
 }
 
 void GUI_SetColor(SDL_Renderer *renderer, SDL_Color color)
@@ -30,10 +33,17 @@ void GUI_Label(SDL_Renderer *renderer, int x, int y, const char *text)
 
 bool GUI_Button(SDL_Renderer *renderer, int x, int y, int width, int height, const char *label)
 {
+    return GUI_ChoiceButton(renderer, x, y, width, height, label, false);
+}
+
+bool GUI_ChoiceButton(SDL_Renderer *renderer, int x, int y, int width, int height, const char *label, bool active)
+{
     const bool hover = inside(x, y, width, height);
-    GUI_SetColor(renderer, hover ? (SDL_Color){ 40, 104, 126, 255 } : (SDL_Color){ 27, 47, 61, 255 });
+    const SDL_Color fill = active ? (SDL_Color){ 31, 91, 99, 255 } : (hover ? (SDL_Color){ 40, 104, 126, 255 } : (SDL_Color){ 27, 47, 61, 255 });
+    const SDL_Color border = active ? (SDL_Color){ 255, 195, 80, 255 } : (hover ? (SDL_Color){ 117, 225, 218, 255 } : (SDL_Color){ 65, 101, 117, 255 });
+    GUI_SetColor(renderer, fill);
     SDL_RenderFillRect(renderer, &(SDL_FRect){ (float)x, (float)y, (float)width, (float)height });
-    GUI_SetColor(renderer, hover ? (SDL_Color){ 117, 225, 218, 255 } : (SDL_Color){ 65, 101, 117, 255 });
+    GUI_SetColor(renderer, border);
     SDL_RenderRect(renderer, &(SDL_FRect){ (float)x, (float)y, (float)width, (float)height });
     GUI_Label(renderer, x + 10, y + 8, label);
     return hover && mouse_down && !previous_mouse_down;

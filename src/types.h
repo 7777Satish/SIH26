@@ -27,6 +27,7 @@ typedef struct SimConfig {
     float kd;
     bool gaussian_noise;
     bool salt_pepper_noise;
+    bool manual_target;
     MotionPattern_t motion_pattern;
 } SimConfig_t;
 
@@ -49,13 +50,22 @@ typedef struct FrameBuffer {
 typedef struct CVResult {
     float centroid_x;
     float centroid_y;
+    float predicted_x;
+    float predicted_y;
     float error_x;
     float error_y;
     float pixel_error;
     float pan_adjustment;
     float tilt_adjustment;
+    float confidence;
+    float roi_radius;
     int bright_pixels;
+    int frames_since_detection;
+    int preferred_search_direction;
+    int preferred_search_vertical_direction;
     bool detected;
+    bool searching;
+    bool using_prediction;
 } CVResult_t;
 
 typedef struct ProfilerState {

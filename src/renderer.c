@@ -2,6 +2,9 @@
 #include "gui.h"
 #include "profiler.h"
 #include <stdio.h>
+#include <stdint.h>
+
+static uint8_t feed_rgba[FRAME_PIXELS * 4];
 
 static void panel(SDL_Renderer *renderer, int x, int y, int w, int h)
 {
@@ -13,7 +16,9 @@ static void panel(SDL_Renderer *renderer, int x, int y, int w, int h)
 
 SDL_Texture *Renderer_CreateFeedTexture(SDL_Renderer *renderer)
 {
-    return SDL_CreateTexture(renderer, SDL_PIXELFORMAT_INDEX8, SDL_TEXTUREACCESS_STREAMING, FRAME_WIDTH, FRAME_HEIGHT);
+    SDL_Texture *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING, FRAME_WIDTH, FRAME_HEIGHT);
+    if (texture != NULL) SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
+    return texture;
 }
 
 void Renderer_DestroyFeedTexture(SDL_Texture *texture)
@@ -24,7 +29,14 @@ void Renderer_DestroyFeedTexture(SDL_Texture *texture)
 void Renderer_DrawDashboard(SDL_Renderer *renderer, SDL_Texture *feed_texture, const FrameBuffer_t *frame, SimConfig_t *config, SimState_t *state, const CVResult_t *cv, const ProfilerState_t *profiler, float fps)
 {
     char text[128];
-    SDL_UpdateTexture(feed_texture, NULL, frame->pixels, FRAME_WIDTH);
+    for (int i = 0; i < FRAME_PIXELS; ++i) {
+        const uint8_t value = frame->pixels[i];
+        feed_rgba[i * 4] = value;
+        feed_rgba[i * 4 + 1] = value;
+        feed_rgba[i * 4 + 2] = value;
+        feed_rgba[i * 4 + 3] = 255;
+    }
+    SDL_UpdateTexture(feed_texture, NULL, feed_rgba, FRAME_WIDTH * 4);
     GUI_SetColor(renderer, (SDL_Color){ 7, 16, 23, 255 });
     SDL_RenderClear(renderer);
     GUI_SetColor(renderer, (SDL_Color){ 117, 225, 218, 255 });
@@ -32,7 +44,7 @@ void Renderer_DrawDashboard(SDL_Renderer *renderer, SDL_Texture *feed_texture, c
     GUI_SetColor(renderer, (SDL_Color){ 100, 121, 132, 255 });
     SDL_RenderDebugText(renderer, 22.0f, 38.0f, "LIVE SIMULATION  //  2000 x 2000 GLOBAL SPACE  //  SDL3 CPU PIPELINE");
 
-    GUI_Begin();
+    GUI_Begin(renderer);
     panel(renderer, 18, 66, 250, 718);
     GUI_Label(renderer, 34, 84, "SYSTEM CONTROLS");
     GUI_Label(renderer, 34, 115, "SIGNAL DISTURBANCE");
@@ -44,14 +56,16 @@ void Renderer_DrawDashboard(SDL_Renderer *renderer, SDL_Texture *feed_texture, c
     GUI_Slider(renderer, 34, 323, 170, "MAX PAN", &config->max_pan_speed, 1.0f, 12.0f);
     GUI_Slider(renderer, 34, 365, 170, "MAX TILT", &config->max_tilt_speed, 1.0f, 12.0f);
     GUI_Label(renderer, 34, 415, "TARGET MOTION");
-    if (GUI_Button(renderer, 34, 440, 200, 30, "LINEAR PATH")) config->motion_pattern = MOTION_LINEAR;
-    if (GUI_Button(renderer, 34, 478, 200, 30, "CIRCULAR ORBIT")) config->motion_pattern = MOTION_CIRCULAR;
-    if (GUI_Button(renderer, 34, 516, 200, 30, "RANDOM WALK")) config->motion_pattern = MOTION_RANDOM;
+    if (GUI_ChoiceButton(renderer, 34, 440, 200, 30, "LINEAR PATH", config->motion_pattern == MOTION_LINEAR)) config->motion_pattern = MOTION_LINEAR;
+    if (GUI_ChoiceButton(renderer, 34, 478, 200, 30, "CIRCULAR ORBIT", config->motion_pattern == MOTION_CIRCULAR)) config->motion_pattern = MOTION_CIRCULAR;
+    if (GUI_ChoiceButton(renderer, 34, 516, 200, 30, "RANDOM WALK", config->motion_pattern == MOTION_RANDOM)) config->motion_pattern = MOTION_RANDOM;
     snprintf(text, sizeof(text), "PATTERN  %s", config->motion_pattern == MOTION_LINEAR ? "LINEAR" : (config->motion_pattern == MOTION_CIRCULAR ? "CIRCULAR" : "RANDOM"));
     GUI_Label(renderer, 34, 570, text);
     snprintf(text, sizeof(text), "PAN %+.1f deg/s   TILT %+.1f deg/s", state->pan_velocity, state->tilt_velocity);
     GUI_Label(renderer, 34, 600, text);
-    GUI_Label(renderer, 34, 640, "CONTROLLER ONLINE");
+    GUI_Toggle(renderer, 34, 668, "MANUAL TARGET", &config->manual_target);
+    GUI_Label(renderer, 34, 696, "ARROWS / WASD TO MOVE");
+    GUI_Label(renderer, 34, 640, cv->searching ? "SEARCH SWEEP ACTIVE" : (cv->detected ? "TARGET LOCKED" : "PREDICTIVE HOLD"));
 
     panel(renderer, 286, 66, 500, 500);
     GUI_Label(renderer, 304, 84, "GLOBAL ENVIRONMENT / 2000M");
@@ -59,10 +73,18 @@ void Renderer_DrawDashboard(SDL_Renderer *renderer, SDL_Texture *feed_texture, c
     SDL_RenderFillRect(renderer, &(SDL_FRect){ 286, 104, 500, 442 });
     GUI_SetColor(renderer, (SDL_Color){ 65, 101, 117, 255 });
     SDL_RenderRect(renderer, &(SDL_FRect){ 286, 104, 500, 442 });
+    GUI_SetColor(renderer, (SDL_Color){ 36, 67, 73, 255 });
+    for (int grid = 1; grid < 5; ++grid) {
+        const float offset = grid * 100.0f;
+        SDL_RenderLine(renderer, 286.0f + offset, 104.0f, 286.0f + offset, 546.0f);
+        SDL_RenderLine(renderer, 286.0f, 104.0f + offset, 786.0f, 104.0f + offset);
+    }
     const float map_scale = 0.25f;
     SDL_FRect target = { 286.0f + state->true_target_x * map_scale - 4.0f, 104.0f + state->true_target_y * map_scale - 4.0f, 8.0f, 8.0f };
     GUI_SetColor(renderer, (SDL_Color){ 255, 195, 80, 255 });
     SDL_RenderFillRect(renderer, &target);
+    SDL_RenderLine(renderer, target.x - 8.0f, target.y + 4.0f, target.x + 16.0f, target.y + 4.0f);
+    SDL_RenderLine(renderer, target.x + 4.0f, target.y - 8.0f, target.x + 4.0f, target.y + 16.0f);
     SDL_FRect fov = { 286.0f + (state->camera_pan - 320.0f) * map_scale, 104.0f + (state->camera_tilt - 240.0f) * map_scale, 160.0f, 120.0f };
     GUI_SetColor(renderer, (SDL_Color){ 117, 225, 218, 255 });
     SDL_RenderRect(renderer, &fov);
@@ -74,8 +96,15 @@ void Renderer_DrawDashboard(SDL_Renderer *renderer, SDL_Texture *feed_texture, c
     GUI_SetColor(renderer, (SDL_Color){ 117, 225, 218, 255 });
     SDL_RenderLine(renderer, 1138, 104, 1138, 584);
     SDL_RenderLine(renderer, 818, 344, 1458, 344);
-    if (cv->detected) SDL_RenderRect(renderer, &(SDL_FRect){ 818.0f + cv->centroid_x - 8.0f, 104.0f + cv->centroid_y - 8.0f, 16.0f, 16.0f });
-    GUI_Label(renderer, 824, 600, "BRIGHTNESS THRESHOLD 200 // CENTROID LOCK");
+    if (cv->detected) {
+        GUI_SetColor(renderer, (SDL_Color){ 117, 225, 218, 255 });
+        SDL_RenderRect(renderer, &(SDL_FRect){ 818.0f + cv->centroid_x - 8.0f, 104.0f + cv->centroid_y - 8.0f, 16.0f, 16.0f });
+    } else if (cv->using_prediction && cv->predicted_x >= 0.0f && cv->predicted_x < FRAME_WIDTH && cv->predicted_y >= 0.0f && cv->predicted_y < FRAME_HEIGHT) {
+        GUI_SetColor(renderer, (SDL_Color){ 255, 195, 80, 255 });
+        SDL_RenderRect(renderer, &(SDL_FRect){ 818.0f + cv->predicted_x - 8.0f, 104.0f + cv->predicted_y - 8.0f, 16.0f, 16.0f });
+    }
+    snprintf(text, sizeof(text), "%s   CONFIDENCE %.0f%%   ROI %.0f px", cv->detected ? "TARGET LOCK" : "PREDICTED POSITION", cv->confidence * 100.0f, cv->roi_radius);
+    GUI_Label(renderer, 824, 600, text);
 
     panel(renderer, 286, 584, 1184, 200);
     GUI_Label(renderer, 304, 602, "TELEMETRY");

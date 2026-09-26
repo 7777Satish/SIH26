@@ -23,19 +23,26 @@ static float clamp_float(float value, float low, float high)
 void VideoGen_UpdateTarget(const SimConfig_t *config, SimState_t *state, float delta_seconds)
 {
     state->simulation_time += delta_seconds;
+    if (config->manual_target) return;
     if (config->motion_pattern == MOTION_CIRCULAR) {
-        const float angle = state->simulation_time * config->target_speed * 0.02f;
+        const float angle = state->simulation_time * config->target_speed * 0.003f;
         state->true_target_x = 1000.0f + cosf(angle) * 650.0f;
         state->true_target_y = 1000.0f + sinf(angle) * 650.0f;
     } else if (config->motion_pattern == MOTION_RANDOM) {
-        state->true_target_x += random_signed() * config->target_speed * delta_seconds * 4.0f;
-        state->true_target_y += random_signed() * config->target_speed * delta_seconds * 4.0f;
+        state->true_target_x += random_signed() * config->target_speed * delta_seconds * 2.5f;
+        state->true_target_y += random_signed() * config->target_speed * delta_seconds * 2.5f;
     } else {
-        state->true_target_x += config->target_speed * delta_seconds * 3.0f;
+        state->true_target_x += config->target_speed * delta_seconds * 2.2f;
         state->true_target_y = 1000.0f + sinf(state->simulation_time * 0.7f) * 360.0f;
     }
     state->true_target_x = clamp_float(state->true_target_x, 30.0f, WORLD_SIZE - 30.0f);
     state->true_target_y = clamp_float(state->true_target_y, 30.0f, WORLD_SIZE - 30.0f);
+}
+
+void VideoGen_MoveTarget(SimState_t *state, float delta_x, float delta_y)
+{
+    state->true_target_x = clamp_float(state->true_target_x + delta_x, 30.0f, WORLD_SIZE - 30.0f);
+    state->true_target_y = clamp_float(state->true_target_y + delta_y, 30.0f, WORLD_SIZE - 30.0f);
 }
 
 void VideoGen_Generate(const SimConfig_t *config, const SimState_t *state, FrameBuffer_t *frame)

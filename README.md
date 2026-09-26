@@ -13,6 +13,8 @@ The project currently targets Linux and requires:
 - `pkg-config`
 - SDL3 development files, including the `sdl3` pkg-config module
 - The system math library (`libm`, normally included with the standard C toolchain)
+- Python 3.10 or newer for the optional asynchronous predictor
+- PyTorch only when loading a TorchScript prediction model; the fallback needs no Python packages
 
 The Makefile asks `pkg-config` for both SDL3 compiler flags and linker flags, so SDL3 must be discoverable before running `make`.
 
@@ -59,6 +61,20 @@ The resulting executable is created at:
 ./virtual_camera
 ```
 
+The C tracker is self-contained by default. To enable the optional asynchronous
+predictor, start it in a second terminal and then launch the dashboard with the
+environment flag enabled:
+
+```sh
+python3 predictor.py
+ORBITAL_PREDICTOR=1 ./virtual_camera
+```
+
+The bridge uses non-blocking UDP on `127.0.0.1:47001`. It sends only the newest
+measurement and accepts predictions only when their confidence is at least 0.55;
+the C estimator remains the fallback if Python is unavailable or loses confidence.
+A TorchScript model can be supplied with `python3 predictor.py --model path/to/model.pt`.
+
 To use another compiler or add project-specific flags, override the Makefile variables on the command line:
 
 ```sh
@@ -76,6 +92,13 @@ Start the dashboard with:
 ./virtual_camera
 ```
 
+The executable is built for Linux. From Windows, run both commands inside WSL
+(WSLg is required for the SDL window):
+
+```powershell
+wsl --cd /mnt/d/Claude/SIH/SIH26 ./virtual_camera
+```
+
 The application opens an SDL window at 1490 x 820 pixels. Use the controls in the left panel to change the simulation while it is running:
 
 - **Noise** changes the generated signal noise intensity.
@@ -84,8 +107,17 @@ The application opens an SDL window at 1490 x 820 pixels. Use the controls in th
 - **Salt / Pepper** enables random black and white pixel spikes.
 - **Max Pan** and **Max Tilt** limit controller output speed.
 - **Linear Path**, **Circular Orbit**, and **Random Walk** select the target motion pattern.
+- **Manual Target** pauses automatic motion; hold the arrow keys or `WASD` to move the target through the world.
 
 Close the window or press `Escape` to exit.
+The window can be resized freely; press `F11` to toggle fullscreen. The dashboard
+keeps its layout and mouse controls aligned while scaling to the available display.
+
+Manual movement is useful for testing prediction: enable **Manual Target**, move
+the target outside the cyan camera field of view, and keep moving it. The tracker
+will enter predictive hold and then the full-world search sweep after missed
+detections. Move the target back into a scanned camera view to verify lock and
+reacquisition.
 
 ## Verify SDL3 Before Building
 
@@ -129,6 +161,8 @@ src/renderer.c     SDL dashboard and camera-feed rendering
 src/gui.c          Lightweight dashboard controls and labels
 src/profiler.c     Frame and pipeline timing measurements
 src/types.h        Shared simulation data structures and constants
+src/predictor_bridge.c  Optional non-blocking C/Python predictor bridge
+predictor.py       Asynchronous constant-velocity/PyTorch predictor
 Makefile           Build and clean targets
 ```
 
@@ -140,7 +174,9 @@ Each frame follows this path:
 
 1. Update the target position according to the selected motion pattern.
 2. Generate the grayscale camera frame and add enabled disturbances.
-3. Find pixels at or above the brightness threshold of 200.
-4. Calculate the bright-pixel centroid and tracking error.
-5. Apply proportional, integral, and derivative controller terms, clamped by pan/tilt limits.
-6. Render the dashboard and telemetry through SDL3.
+3. Search an adaptive predicted-position ROI and expand it for recovery when detection is lost.
+4. Update the C state estimator and project the target across measured frame latency.
+5. Optionally accept a high-confidence asynchronous Python prediction.
+6. If the target remains absent, sweep the camera across the full world in a serpentine pan/tilt scan.
+7. Apply proportional, integral, and derivative controller terms, clamped by pan/tilt limits.
+8. Render the dashboard and telemetry through SDL3.
