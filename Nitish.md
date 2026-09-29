@@ -172,7 +172,10 @@ The default C tracker works without starting Python.
 
 ## Build and Run
 
-The project targets Linux and uses SDL3, GNU Make, GCC or Clang, `pkg-config`, and `libm`.
+The project targets Linux and uses SDL3, GNU Make, GCC or Clang, `pkvoid VideoGen_UpdateTarget(const SimConfig_t *config, SimState_t *state, float delta_seconds);
+void VideoGen_MoveTarget(SimState_t *state, float delta_x, float delta_y);
+void VideoGen_Generate(const SimConfig_t *config, const SimState_t *state, FrameBuffer_t *frame);
+g-config`, and `libm`.
 
 From Windows, the built executable is a Linux ELF binary and must be launched through WSL. WSLg is required for the SDL window:
 

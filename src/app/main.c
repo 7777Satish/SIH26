@@ -58,7 +58,7 @@ int main(void)
 		fprintf(stderr, "SDL initialization failed: %s\n", SDL_GetError());
 		return 1;
 	}
-	SDL_Window *window = SDL_CreateWindow("Orbital Eye - Virtual Camera Tracking", 1490, 820, SDL_WINDOW_RESIZABLE);
+	SDL_Window *window = SDL_CreateWindow("Coarse Alignment Workstation", 1084, 764, SDL_WINDOW_RESIZABLE);
 	SDL_Renderer *renderer = window != NULL ? SDL_CreateRenderer(window, NULL) : NULL;
 	SDL_Texture *feed_texture = renderer != NULL ? Renderer_CreateFeedTexture(renderer) : NULL;
 	if (window == NULL || renderer == NULL || feed_texture == NULL) {
@@ -69,8 +69,6 @@ int main(void)
 		SDL_Quit();
 		return 1;
 	}
-	SDL_SetRenderLogicalPresentation(renderer, 1490, 820, SDL_LOGICAL_PRESENTATION_LETTERBOX);
-
 	SimConfig_t config = { 70.0f, 5.0f, 5.0f, 18.0f, 0.12f, 0.025f, 0.0002f, 0.006f, true, true, false, MOTION_CIRCULAR };
 	SimState_t state = { 1650.0f, 1000.0f, 1650.0f, 1000.0f, 0.0f, 0.0f, 0.0f };
 	FrameBuffer_t frame = { { 0 }, FRAME_WIDTH, FRAME_HEIGHT };

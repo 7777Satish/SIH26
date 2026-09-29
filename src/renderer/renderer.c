@@ -1,21 +1,203 @@
 #include "renderer/renderer.h"
 #include "gui/gui.h"
 #include "profiler/profiler.h"
-#include <stdio.h>
+#include <SDL3_image/SDL_image.h>
+#include <SDL3_ttf/SDL_ttf.h>
+#include <math.h>
 #include <stdint.h>
+#include <stdio.h>
 
 static uint8_t feed_rgba[FRAME_PIXELS * 4];
+static TTF_Font *poppins_font;
+static SDL_Texture *icon_close;
+static SDL_Texture *icon_minimize;
+static SDL_Texture *icon_maximize;
+static SDL_Texture *icon_chevron_down;
+static SDL_Texture *icon_back;
+static SDL_Texture *icon_forward;
+static SDL_Texture *icon_restore;
+static SDL_Texture *icon_reload;
+static int target_mode;
+static int target_position;
+static int target_shape;
+static bool environment_view = true;
+static bool fit_view = true;
+static bool overlay_grid = true;
+static bool overlay_box = true;
+static bool overlay_error = true;
+static bool timeline_playing = true;
+static float timeline_position;
 
-static void panel(SDL_Renderer *renderer, int x, int y, int w, int h)
+static const char *const TARGET_POSITIONS[] = { "Center", "Upper Left", "Lower Right" };
+static const char *const TARGET_SHAPES[] = { "Square 10x10 px", "Circle 10 px", "Wide 20x8 px" };
+static const char *const MOTION_PATTERNS[] = { "Linear Path", "Circular Orbit", "Random Walk" };
+
+typedef struct WorkspaceLayout {
+    float width;
+    float height;
+    float inset;
+    float gap;
+    float header;
+    float left;
+    float center;
+    float right;
+    float main_y;
+    float main_height;
+    float center_x;
+    float right_x;
+} WorkspaceLayout_t;
+
+static const SDL_Color COLOR_BACKGROUND = { 17, 8, 13, 255 };
+static const SDL_Color COLOR_SURFACE = { 29, 14, 21, 255 };
+static const SDL_Color COLOR_SURFACE_RAISED = { 35, 18, 27, 255 };
+static const SDL_Color COLOR_BORDER = { 55, 31, 41, 255 };
+static const SDL_Color COLOR_GRID = { 40, 22, 31, 255 };
+static const SDL_Color COLOR_TEXT = { 206, 187, 193, 255 };
+static const SDL_Color COLOR_MUTED = { 130, 101, 112, 255 };
+static const SDL_Color COLOR_LIME = { 207, 238, 75, 255 };
+static const SDL_Color COLOR_LIME_DIM = { 117, 126, 44, 255 };
+static const SDL_Color COLOR_RED = { 229, 76, 72, 255 };
+static const SDL_Color COLOR_YELLOW = { 239, 179, 40, 255 };
+
+static float max_float(float a, float b)
 {
-    GUI_SetColor(renderer, (SDL_Color){ 13, 25, 34, 255 });
-    SDL_RenderFillRect(renderer, &(SDL_FRect){ (float)x, (float)y, (float)w, (float)h });
-    GUI_SetColor(renderer, (SDL_Color){ 35, 64, 76, 255 });
-    SDL_RenderRect(renderer, &(SDL_FRect){ (float)x, (float)y, (float)w, (float)h });
+    return a > b ? a : b;
+}
+
+static float min_float(float a, float b)
+{
+    return a < b ? a : b;
+}
+
+static WorkspaceLayout_t workspace_layout(SDL_Renderer *renderer)
+{
+    int width;
+    int height;
+    SDL_GetRenderOutputSize(renderer, &width, &height);
+    WorkspaceLayout_t layout = { 0 };
+    layout.width = (float)width;
+    layout.height = (float)height;
+    layout.inset = max_float(4.0f, layout.width * 0.0038f);
+    layout.gap = 0.0f;
+    layout.header = 0.0f;
+    layout.left = layout.width * 0.242f;
+    layout.right = layout.width * 0.230f;
+    layout.center = layout.width - layout.inset * 2.0f - layout.left - layout.right;
+    layout.main_y = 0.0f;
+    layout.main_height = layout.height;
+    layout.center_x = layout.inset + layout.left;
+    layout.right_x = layout.center_x + layout.center;
+    return layout;
+}
+
+static void panel(SDL_Renderer *renderer, SDL_FRect rectangle, SDL_Color fill)
+{
+    const float radius = min_float(10.0f, min_float(rectangle.w, rectangle.h) * 0.12f);
+    GUI_SetColor(renderer, fill);
+    for (int row = 0; row < (int)rectangle.h; ++row) {
+        const float edge = row < radius ? radius - row : (row >= rectangle.h - radius ? row - (rectangle.h - radius - 1.0f) : 0.0f);
+        const float inset = edge > 0.0f ? radius - sqrtf(radius * radius - edge * edge) : 0.0f;
+        SDL_RenderLine(renderer, rectangle.x + inset, rectangle.y + row, rectangle.x + rectangle.w - inset, rectangle.y + row);
+    }
+    GUI_SetColor(renderer, COLOR_BORDER);
+    SDL_FPoint points[37];
+    const float pi = 3.14159265359f;
+    int point_count = 0;
+    const float centers_x[] = { rectangle.x + rectangle.w - radius, rectangle.x + rectangle.w - radius, rectangle.x + radius, rectangle.x + radius };
+    const float centers_y[] = { rectangle.y + radius, rectangle.y + rectangle.h - radius, rectangle.y + rectangle.h - radius, rectangle.y + radius };
+    const float start_angles[] = { -pi * 0.5f, 0.0f, pi * 0.5f, pi };
+    for (int corner = 0; corner < 4; ++corner) {
+        for (int step = 0; step <= 8; ++step) {
+            const float angle = start_angles[corner] + (pi * 0.5f * step / 8.0f);
+            points[point_count++] = (SDL_FPoint){ centers_x[corner] + cosf(angle) * radius, centers_y[corner] + sinf(angle) * radius };
+        }
+    }
+    points[point_count] = points[0];
+    SDL_RenderLines(renderer, points, point_count + 1);
+}
+
+static SDL_Texture *load_icon(SDL_Renderer *renderer, const char *name)
+{
+    char path[128];
+    snprintf(path, sizeof(path), "assets/icons/%s.png", name);
+    SDL_Texture *texture = IMG_LoadTexture(renderer, path);
+    if (texture != NULL) SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+    return texture;
+}
+
+static void draw_icon(SDL_Renderer *renderer, SDL_Texture *texture, float x, float y, float size)
+{
+    if (texture == NULL) return;
+    SDL_RenderTexture(renderer, texture, NULL, &(SDL_FRect){ x, y, size, size });
+}
+
+static void draw_text(SDL_Renderer *renderer, float x, float y, const char *text, SDL_Color color, TTF_Font *font)
+{
+    if (font == NULL || text == NULL || text[0] == '\0') return;
+    SDL_Surface *surface = TTF_RenderText_Blended(font, text, 0, color);
+    if (surface == NULL) return;
+    SDL_Texture *texture = SDL_CreateTextureFromSurface(renderer, surface);
+    if (texture != NULL) {
+        SDL_RenderTexture(renderer, texture, NULL, &(SDL_FRect){ x, y, (float)surface->w, (float)surface->h });
+        SDL_DestroyTexture(texture);
+    }
+    SDL_DestroySurface(surface);
+}
+
+static void text_at(SDL_Renderer *renderer, float x, float y, const char *text, SDL_Color color)
+{
+    draw_text(renderer, x, y, text, color, poppins_font);
+}
+
+static void section(SDL_Renderer *renderer, float x, float y, const char *title)
+{
+    draw_text(renderer, x, y, title, COLOR_MUTED, poppins_font);
+}
+
+static void divider(SDL_Renderer *renderer, float x, float y, float width)
+{
+    GUI_SetColor(renderer, COLOR_BORDER);
+    SDL_RenderLine(renderer, x, y, x + width, y);
+}
+
+static void metric(SDL_Renderer *renderer, float x, float y, float width, const char *title, const char *value, const char *detail, bool warning)
+{
+    panel(renderer, (SDL_FRect){ x, y, width, 52.0f }, COLOR_SURFACE_RAISED);
+    text_at(renderer, x + 10.0f, y + 10.0f, title, COLOR_MUTED);
+    draw_text(renderer, x + width - 74.0f, y + 8.0f, value, COLOR_TEXT, poppins_font);
+    text_at(renderer, x + 10.0f, y + 30.0f, detail, warning ? COLOR_RED : COLOR_MUTED);
+}
+
+static void reset_configuration(SimConfig_t *config, SimState_t *state)
+{
+    config->max_pan_speed = 5.0f;
+    config->max_tilt_speed = 5.0f;
+    config->noise_intensity = 18.0f;
+    config->haze_level = 0.12f;
+    config->gaussian_noise = true;
+    config->salt_pepper_noise = true;
+    config->manual_target = false;
+    config->motion_pattern = MOTION_CIRCULAR;
+    target_mode = 0;
+    target_position = 0;
+    target_shape = 0;
+    state->true_target_x = WORLD_SIZE * 0.5f;
+    state->true_target_y = WORLD_SIZE * 0.5f;
 }
 
 SDL_Texture *Renderer_CreateFeedTexture(SDL_Renderer *renderer)
 {
+    TTF_Init();
+    poppins_font = TTF_OpenFont("assets/Poppins/Poppins-Regular.ttf", 15.0f);
+    GUI_SetFonts(poppins_font, poppins_font);
+    icon_close = load_icon(renderer, "close");
+    icon_minimize = load_icon(renderer, "minus");
+    icon_maximize = load_icon(renderer, "square");
+    icon_chevron_down = load_icon(renderer, "chevron_down");
+    icon_back = load_icon(renderer, "back");
+    icon_forward = load_icon(renderer, "forward");
+    icon_restore = load_icon(renderer, "restore");
+    icon_reload = load_icon(renderer, "reload");
     SDL_Texture *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING, FRAME_WIDTH, FRAME_HEIGHT);
     if (texture != NULL) SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
     return texture;
@@ -24,6 +206,17 @@ SDL_Texture *Renderer_CreateFeedTexture(SDL_Renderer *renderer)
 void Renderer_DestroyFeedTexture(SDL_Texture *texture)
 {
     SDL_DestroyTexture(texture);
+    SDL_DestroyTexture(icon_close);
+    SDL_DestroyTexture(icon_minimize);
+    SDL_DestroyTexture(icon_maximize);
+    SDL_DestroyTexture(icon_chevron_down);
+    SDL_DestroyTexture(icon_back);
+    SDL_DestroyTexture(icon_forward);
+    SDL_DestroyTexture(icon_restore);
+    SDL_DestroyTexture(icon_reload);
+    GUI_SetFonts(NULL, NULL);
+    if (poppins_font != NULL) TTF_CloseFont(poppins_font);
+    TTF_Quit();
 }
 
 void Renderer_DrawDashboard(SDL_Renderer *renderer, SDL_Texture *feed_texture, const FrameBuffer_t *frame, SimConfig_t *config, SimState_t *state, const CVResult_t *cv, const ProfilerState_t *profiler, float fps)
@@ -37,82 +230,142 @@ void Renderer_DrawDashboard(SDL_Renderer *renderer, SDL_Texture *feed_texture, c
         feed_rgba[i * 4 + 3] = 255;
     }
     SDL_UpdateTexture(feed_texture, NULL, feed_rgba, FRAME_WIDTH * 4);
-    GUI_SetColor(renderer, (SDL_Color){ 7, 16, 23, 255 });
+
+    const WorkspaceLayout_t layout = workspace_layout(renderer);
+    const float pad = max_float(16.0f, min_float(layout.width, layout.height) * 0.021f);
+    const float content_y = layout.main_y;
+    const float center_x = layout.center_x;
+    const float right_x = layout.right_x;
+    const float rail_scale = min_float(1.14f, layout.main_height / 620.0f);
+    const float timeline_height = min_float(184.0f, layout.main_height * 0.263f);
+    const float camera_height = layout.main_height - timeline_height - layout.gap;
+    if (timeline_playing) timeline_position += fps > 0.0f ? 1.0f / fps : 0.0f;
+    if (timeline_position > 150.0f) timeline_position = 0.0f;
+
+    GUI_SetColor(renderer, COLOR_BACKGROUND);
     SDL_RenderClear(renderer);
-    GUI_SetColor(renderer, (SDL_Color){ 117, 225, 218, 255 });
-    SDL_RenderDebugText(renderer, 22.0f, 18.0f, "ORBITAL EYE / VIRTUAL CAMERA TRACKING");
-    GUI_SetColor(renderer, (SDL_Color){ 100, 121, 132, 255 });
-    SDL_RenderDebugText(renderer, 22.0f, 38.0f, "LIVE SIMULATION  //  2000 x 2000 GLOBAL SPACE  //  SDL3 CPU PIPELINE");
-
     GUI_Begin(renderer);
-    panel(renderer, 18, 66, 250, 718);
-    GUI_Label(renderer, 34, 84, "SYSTEM CONTROLS");
-    GUI_Label(renderer, 34, 115, "SIGNAL DISTURBANCE");
-    GUI_Slider(renderer, 34, 138, 170, "NOISE", &config->noise_intensity, 0.0f, 100.0f);
-    GUI_Slider(renderer, 34, 180, 170, "HAZE", &config->haze_level, 0.0f, 1.0f);
-    GUI_Toggle(renderer, 34, 225, "GAUSSIAN", &config->gaussian_noise);
-    GUI_Toggle(renderer, 34, 253, "SALT / PEPPER", &config->salt_pepper_noise);
-    GUI_Label(renderer, 34, 300, "PTZ CONSTRAINTS");
-    GUI_Slider(renderer, 34, 323, 170, "MAX PAN", &config->max_pan_speed, 1.0f, 12.0f);
-    GUI_Slider(renderer, 34, 365, 170, "MAX TILT", &config->max_tilt_speed, 1.0f, 12.0f);
-    GUI_Label(renderer, 34, 415, "TARGET MOTION");
-    if (GUI_ChoiceButton(renderer, 34, 440, 200, 30, "LINEAR PATH", config->motion_pattern == MOTION_LINEAR)) config->motion_pattern = MOTION_LINEAR;
-    if (GUI_ChoiceButton(renderer, 34, 478, 200, 30, "CIRCULAR ORBIT", config->motion_pattern == MOTION_CIRCULAR)) config->motion_pattern = MOTION_CIRCULAR;
-    if (GUI_ChoiceButton(renderer, 34, 516, 200, 30, "RANDOM WALK", config->motion_pattern == MOTION_RANDOM)) config->motion_pattern = MOTION_RANDOM;
-    snprintf(text, sizeof(text), "PATTERN  %s", config->motion_pattern == MOTION_LINEAR ? "LINEAR" : (config->motion_pattern == MOTION_CIRCULAR ? "CIRCULAR" : "RANDOM"));
-    GUI_Label(renderer, 34, 570, text);
-    snprintf(text, sizeof(text), "PAN %+.1f deg/s   TILT %+.1f deg/s", state->pan_velocity, state->tilt_velocity);
-    GUI_Label(renderer, 34, 600, text);
-    GUI_Toggle(renderer, 34, 668, "MANUAL TARGET", &config->manual_target);
-    GUI_Label(renderer, 34, 696, "ARROWS / WASD TO MOVE");
-    GUI_Label(renderer, 34, 640, cv->searching ? "SEARCH SWEEP ACTIVE" : (cv->detected ? "TARGET LOCKED" : "PREDICTIVE HOLD"));
+    const float left_x = layout.inset;
+    const float left_inner = left_x + pad;
+    const float left_width = layout.left - pad * 2.0f;
+    panel(renderer, (SDL_FRect){ left_x, content_y, layout.left, layout.main_height }, COLOR_SURFACE);
+    section(renderer, left_inner, content_y + 20.0f * rail_scale, "SIMULATION & TARGET");
+    text_at(renderer, left_inner, content_y + 48.0f * rail_scale, "Target Mode", COLOR_MUTED);
+    text_at(renderer, left_inner + left_width * 0.62f, content_y + 48.0f * rail_scale, "Single Beacon", COLOR_TEXT);
+    if (GUI_ChoiceButton(renderer, (int)left_inner, (int)(content_y + 72.0f * rail_scale), (int)(left_width * 0.5f), 26, "Single", target_mode == 0)) target_mode = 0;
+    if (GUI_ChoiceButton(renderer, (int)(left_inner + left_width * 0.5f), (int)(content_y + 72.0f * rail_scale), (int)(left_width * 0.5f), 26, "Multi", target_mode == 1)) target_mode = 1;
+    text_at(renderer, left_inner, content_y + 122.0f * rail_scale, "Target Shape", COLOR_MUTED);
+    GUI_Dropdown(renderer, (int)(left_inner + left_width * 0.48f), (int)(content_y + 114.0f * rail_scale), (int)(left_width * 0.52f), 28, TARGET_SHAPES[target_shape], TARGET_SHAPES, 3, &target_shape, 3);
+    text_at(renderer, left_inner, content_y + 188.0f * rail_scale, "Initial Position", COLOR_MUTED);
+    GUI_Dropdown(renderer, (int)left_inner, (int)(content_y + 214.0f * rail_scale), (int)left_width, 32, TARGET_POSITIONS[target_position], TARGET_POSITIONS, 3, &target_position, 1);
+    text_at(renderer, left_inner, content_y + 268.0f * rail_scale, "Motion Pattern", COLOR_MUTED);
+    GUI_Dropdown(renderer, (int)left_inner, (int)(content_y + 294.0f * rail_scale), (int)left_width, 32, MOTION_PATTERNS[config->motion_pattern], MOTION_PATTERNS, 3, (int *)&config->motion_pattern, 2);
+    divider(renderer, left_inner, content_y + 354.0f * rail_scale, left_width);
+    section(renderer, left_inner, content_y + 378.0f * rail_scale, "DISTURBANCES & NOISE");
+    text_at(renderer, left_inner, content_y + 410.0f * rail_scale, "Image Noise", COLOR_MUTED);
+    GUI_Checkbox(renderer, (int)left_inner, (int)(content_y + 434.0f * rail_scale), "Salt&P", &config->salt_pepper_noise);
+    GUI_Checkbox(renderer, (int)(left_inner + left_width * 0.46f), (int)(content_y + 434.0f * rail_scale), "Gauss", &config->gaussian_noise);
+    GUI_Checkbox(renderer, (int)(left_inner + left_width * 0.82f), (int)(content_y + 434.0f * rail_scale), "Poisson", &overlay_error);
+    text_at(renderer, left_inner, content_y + 470.0f * rail_scale, "Atmosphere", COLOR_MUTED);
+    text_at(renderer, left_inner + left_width * 0.82f, content_y + 470.0f * rail_scale, "Haze", COLOR_LIME);
+    if (GUI_ChoiceButton(renderer, (int)left_inner, (int)(content_y + 494.0f * rail_scale), (int)(left_width / 3.0f), 26, "Clear", config->haze_level == 0.0f)) config->haze_level = 0.0f;
+    if (GUI_ChoiceButton(renderer, (int)(left_inner + left_width / 3.0f), (int)(content_y + 494.0f * rail_scale), (int)(left_width / 3.0f), 26, "Haze", config->haze_level > 0.0f && config->haze_level < 0.4f)) config->haze_level = 0.12f;
+    if (GUI_ChoiceButton(renderer, (int)(left_inner + left_width * 2.0f / 3.0f), (int)(content_y + 494.0f * rail_scale), (int)(left_width / 3.0f), 26, "Fog", config->haze_level >= 0.4f)) config->haze_level = 0.5f;
+    GUI_Slider(renderer, (int)left_inner, (int)(content_y + 546.0f * rail_scale), (int)left_width, "Platform Jitter", &config->noise_intensity, 0.0f, 100.0f);
+    const int footer_y = (int)(content_y + layout.main_height - pad - 32.0f);
+    if (GUI_Button(renderer, (int)left_inner, footer_y, (int)(left_width * 0.58f), 28, "Reset Configuration")) reset_configuration(config, state);
+    GUI_Toggle(renderer, (int)(left_inner + left_width * 0.62f), footer_y + 4, "Manual", &config->manual_target);
 
-    panel(renderer, 286, 66, 500, 500);
-    GUI_Label(renderer, 304, 84, "GLOBAL ENVIRONMENT / 2000M");
-    GUI_SetColor(renderer, (SDL_Color){ 19, 45, 52, 255 });
-    SDL_RenderFillRect(renderer, &(SDL_FRect){ 286, 104, 500, 442 });
-    GUI_SetColor(renderer, (SDL_Color){ 65, 101, 117, 255 });
-    SDL_RenderRect(renderer, &(SDL_FRect){ 286, 104, 500, 442 });
-    GUI_SetColor(renderer, (SDL_Color){ 36, 67, 73, 255 });
-    for (int grid = 1; grid < 5; ++grid) {
-        const float offset = grid * 100.0f;
-        SDL_RenderLine(renderer, 286.0f + offset, 104.0f, 286.0f + offset, 546.0f);
-        SDL_RenderLine(renderer, 286.0f, 104.0f + offset, 786.0f, 104.0f + offset);
+    panel(renderer, (SDL_FRect){ center_x, content_y, layout.center, camera_height }, COLOR_SURFACE);
+    panel(renderer, (SDL_FRect){ center_x + pad, content_y + pad, layout.center - pad * 2.0f, 42.0f }, COLOR_SURFACE_RAISED);
+    if (GUI_ChoiceButton(renderer, (int)(center_x + pad + 12.0f), (int)(content_y + pad + 8.0f), 76, 26, "Camera", !environment_view)) environment_view = false;
+    if (GUI_ChoiceButton(renderer, (int)(center_x + pad + 90.0f), (int)(content_y + pad + 8.0f), 88, 26, "Environment", environment_view)) environment_view = true;
+    if (GUI_ChoiceButton(renderer, (int)(center_x + layout.center - 104.0f), (int)(content_y + pad + 8.0f), 42, 26, "100%", !fit_view)) fit_view = false;
+    if (GUI_ChoiceButton(renderer, (int)(center_x + layout.center - 58.0f), (int)(content_y + pad + 8.0f), 42, 26, "Fit", fit_view)) fit_view = true;
+    const float map_x = center_x + pad;
+    const float map_y = content_y + 84.0f;
+    const float map_width = layout.center - pad * 2.0f;
+    const float map_height = camera_height - 98.0f;
+    GUI_SetColor(renderer, (SDL_Color){ 20, 10, 16, 255 });
+    SDL_RenderFillRect(renderer, &(SDL_FRect){ map_x, map_y, map_width, map_height });
+    if (!environment_view) SDL_RenderTexture(renderer, feed_texture, NULL, &(SDL_FRect){ map_x, map_y, map_width, map_height });
+    GUI_SetColor(renderer, COLOR_GRID);
+    for (int grid = 1; grid < 10 && overlay_grid; ++grid) {
+        const float x = map_x + map_width * grid / 10.0f;
+        const float y = map_y + map_height * grid / 8.0f;
+        SDL_RenderLine(renderer, x, map_y, x, map_y + map_height);
+        if (grid < 8) SDL_RenderLine(renderer, map_x, y, map_x + map_width, y);
     }
-    const float map_scale = 0.25f;
-    SDL_FRect target = { 286.0f + state->true_target_x * map_scale - 4.0f, 104.0f + state->true_target_y * map_scale - 4.0f, 8.0f, 8.0f };
-    GUI_SetColor(renderer, (SDL_Color){ 255, 195, 80, 255 });
-    SDL_RenderFillRect(renderer, &target);
-    SDL_RenderLine(renderer, target.x - 8.0f, target.y + 4.0f, target.x + 16.0f, target.y + 4.0f);
-    SDL_RenderLine(renderer, target.x + 4.0f, target.y - 8.0f, target.x + 4.0f, target.y + 16.0f);
-    SDL_FRect fov = { 286.0f + (state->camera_pan - 320.0f) * map_scale, 104.0f + (state->camera_tilt - 240.0f) * map_scale, 160.0f, 120.0f };
-    GUI_SetColor(renderer, (SDL_Color){ 117, 225, 218, 255 });
-    SDL_RenderRect(renderer, &fov);
-    GUI_Label(renderer, 304, 520, "AMBER TRUE TARGET     CYAN ACTIVE FOV");
+    const float map_scale = min_float(map_width / WORLD_SIZE, map_height / WORLD_SIZE);
+    const float target_x = map_x + state->true_target_x * map_scale;
+    const float target_y = map_y + state->true_target_y * map_scale;
+    const float camera_x = map_x + (state->camera_pan - FRAME_WIDTH * 0.5f) * map_scale;
+    const float camera_y = map_y + (state->camera_tilt - FRAME_HEIGHT * 0.5f) * map_scale;
+    const SDL_FRect camera_frame = { camera_x, camera_y, FRAME_WIDTH * map_scale, FRAME_HEIGHT * map_scale };
+    GUI_SetColor(renderer, COLOR_LIME_DIM);
+    SDL_RenderRect(renderer, &camera_frame);
+    GUI_SetColor(renderer, COLOR_LIME);
+    SDL_RenderFillRect(renderer, &(SDL_FRect){ target_x - 9.0f, target_y - 9.0f, 18.0f, 18.0f });
+    text_at(renderer, map_x + 10.0f, map_y + 10.0f, cv->detected ? "TRACKING LOCK" : "SEARCHING", cv->detected ? COLOR_LIME : COLOR_YELLOW);
 
-    panel(renderer, 806, 66, 664, 500);
-    GUI_Label(renderer, 824, 84, "CAMERA PERSPECTIVE / 640 x 480");
-    SDL_RenderTexture(renderer, feed_texture, NULL, &(SDL_FRect){ 818, 104, 640, 480 });
-    GUI_SetColor(renderer, (SDL_Color){ 117, 225, 218, 255 });
-    SDL_RenderLine(renderer, 1138, 104, 1138, 584);
-    SDL_RenderLine(renderer, 818, 344, 1458, 344);
-    if (cv->detected) {
-        GUI_SetColor(renderer, (SDL_Color){ 117, 225, 218, 255 });
-        SDL_RenderRect(renderer, &(SDL_FRect){ 818.0f + cv->centroid_x - 8.0f, 104.0f + cv->centroid_y - 8.0f, 16.0f, 16.0f });
-    } else if (cv->using_prediction && cv->predicted_x >= 0.0f && cv->predicted_x < FRAME_WIDTH && cv->predicted_y >= 0.0f && cv->predicted_y < FRAME_HEIGHT) {
-        GUI_SetColor(renderer, (SDL_Color){ 255, 195, 80, 255 });
-        SDL_RenderRect(renderer, &(SDL_FRect){ 818.0f + cv->predicted_x - 8.0f, 104.0f + cv->predicted_y - 8.0f, 16.0f, 16.0f });
-    }
-    snprintf(text, sizeof(text), "%s   CONFIDENCE %.0f%%   ROI %.0f px", cv->detected ? "TARGET LOCK" : "PREDICTED POSITION", cv->confidence * 100.0f, cv->roi_radius);
-    GUI_Label(renderer, 824, 600, text);
+    panel(renderer, (SDL_FRect){ center_x, content_y + camera_height + layout.gap, layout.center, timeline_height }, COLOR_SURFACE);
+    text_at(renderer, center_x + pad, content_y + camera_height + layout.gap + 20.0f, "04:34.27", COLOR_LIME);
+    text_at(renderer, center_x + 88.0f, content_y + camera_height + layout.gap + 20.0f, "/ 02:30.00", COLOR_MUTED);
+    const float transport_y = content_y + camera_height + layout.gap + 12.0f;
+    draw_icon(renderer, icon_back, center_x + layout.center * 0.5f - 42.0f, transport_y, 22.0f);
+    draw_icon(renderer, icon_restore, center_x + layout.center * 0.5f - 10.0f, transport_y, 22.0f);
+    draw_icon(renderer, icon_forward, center_x + layout.center * 0.5f + 22.0f, transport_y, 22.0f);
+    if (GUI_Button(renderer, (int)(center_x + layout.center * 0.5f - 42.0f), (int)transport_y, 22, 22, "")) timeline_position = 0.0f;
+    if (GUI_Button(renderer, (int)(center_x + layout.center * 0.5f - 10.0f), (int)transport_y, 22, 22, "")) timeline_playing = !timeline_playing;
+    if (GUI_Button(renderer, (int)(center_x + layout.center * 0.5f + 22.0f), (int)transport_y, 22, 22, "")) timeline_position += 5.0f;
+    text_at(renderer, center_x + layout.center - 148.0f, content_y + camera_height + layout.gap + 20.0f, "Profile: ", COLOR_MUTED);
+    text_at(renderer, center_x + layout.center - 94.0f, content_y + camera_height + layout.gap + 20.0f, "Harmonic Orbit", COLOR_TEXT);
+    const float track_x = center_x + pad;
+    const float track_y = content_y + camera_height + layout.gap + 58.0f;
+    const float track_width = layout.center - pad * 2.0f;
+    text_at(renderer, track_x, track_y, "00:00              00:30              01:00              01:30              02:00              02:30", COLOR_MUTED);
+    text_at(renderer, track_x, track_y + 26.0f, "Video Feed", COLOR_TEXT);
+    text_at(renderer, track_x, track_y + 48.0f, "Tracking Lock", COLOR_TEXT);
+    text_at(renderer, track_x, track_y + 70.0f, "Disturbance", COLOR_TEXT);
+    GUI_SetColor(renderer, COLOR_SURFACE_RAISED);
+    SDL_RenderFillRect(renderer, &(SDL_FRect){ track_x + 102.0f, track_y + 20.0f, track_width - 102.0f, 12.0f });
+    SDL_RenderFillRect(renderer, &(SDL_FRect){ track_x + 102.0f, track_y + 42.0f, track_width - 102.0f, 12.0f });
+    SDL_RenderFillRect(renderer, &(SDL_FRect){ track_x + 102.0f, track_y + 64.0f, track_width - 102.0f, 12.0f });
+    GUI_SetColor(renderer, COLOR_LIME_DIM);
+    SDL_RenderFillRect(renderer, &(SDL_FRect){ track_x + 102.0f, track_y + 42.0f, track_width * 0.64f, 12.0f });
+    GUI_SetColor(renderer, COLOR_LIME);
+    SDL_RenderLine(renderer, track_x + track_width, track_y + 4.0f, track_x + track_width, track_y + 80.0f);
 
-    panel(renderer, 286, 584, 1184, 200);
-    GUI_Label(renderer, 304, 602, "TELEMETRY");
-    snprintf(text, sizeof(text), "FPS %6.1f   ACQUISITION %6.2f ms   TRACKING ERROR %6.1f px   BRIGHT PIXELS %d", fps, profiler->milliseconds[PROFILER_VIDEO], cv->pixel_error, cv->bright_pixels);
-    GUI_Label(renderer, 304, 630, text);
-    for (int i = 0; i < PROFILER_LAYER_COUNT; ++i) {
-        snprintf(text, sizeof(text), "%-12s %7.3f ms   %5.1f%% CPU", Profiler_LayerName((ProfilerLayer_t)i), profiler->milliseconds[i], profiler->cpu_percent[i]);
-        GUI_Label(renderer, 304, 662 + i * 22, text);
-    }
+    panel(renderer, (SDL_FRect){ right_x, content_y, layout.right, layout.main_height }, COLOR_SURFACE);
+    const float right_inner = right_x + pad;
+    const float right_width = layout.right - pad * 2.0f;
+    section(renderer, right_inner, content_y + 20.0f * rail_scale, "CAMERA & SENSOR OPTICS");
+    text_at(renderer, right_inner, content_y + 48.0f * rail_scale, "Sensor Res", COLOR_MUTED);
+    text_at(renderer, right_inner + right_width * 0.56f, content_y + 48.0f * rail_scale, "640 x 480 px (FPA)", COLOR_TEXT);
+    text_at(renderer, right_inner, content_y + 72.0f * rail_scale, "Virtual Screen", COLOR_MUTED);
+    text_at(renderer, right_inner + right_width * 0.56f, content_y + 72.0f * rail_scale, "2000 x 2000 px", COLOR_MUTED);
+    text_at(renderer, right_inner, content_y + 96.0f * rail_scale, "Camera FOV", COLOR_MUTED);
+    text_at(renderer, right_inner + right_width * 0.56f, content_y + 96.0f * rail_scale, "4.0 x 3.0 deg", COLOR_TEXT);
+    text_at(renderer, right_inner, content_y + 120.0f * rail_scale, "Frame Rate", COLOR_MUTED);
+    snprintf(text, sizeof(text), "%.0f Hz", fps); text_at(renderer, right_inner + right_width * 0.78f, content_y + 120.0f * rail_scale, text, COLOR_LIME);
+    text_at(renderer, right_inner, content_y + 154.0f * rail_scale, "Pan Limit", COLOR_MUTED);
+    snprintf(text, sizeof(text), "%.1f °/s", config->max_pan_speed); text_at(renderer, right_inner + right_width * 0.78f, content_y + 154.0f * rail_scale, text, COLOR_LIME);
+    GUI_Slider(renderer, (int)right_inner, (int)(content_y + 168.0f * rail_scale), (int)right_width, "", &config->max_pan_speed, 1.0f, 12.0f);
+    text_at(renderer, right_inner, content_y + 198.0f * rail_scale, "Tilt Limit", COLOR_MUTED);
+    snprintf(text, sizeof(text), "%.1f °/s", config->max_tilt_speed); text_at(renderer, right_inner + right_width * 0.78f, content_y + 198.0f * rail_scale, text, COLOR_LIME);
+    GUI_Slider(renderer, (int)right_inner, (int)(content_y + 212.0f * rail_scale), (int)right_width, "", &config->max_tilt_speed, 1.0f, 12.0f);
+    divider(renderer, right_inner, content_y + 250.0f * rail_scale, right_width);
+    section(renderer, right_inner, content_y + 272.0f * rail_scale, "VIEW OVERLAYS");
+    GUI_Checkbox(renderer, (int)right_inner, (int)(content_y + 296.0f * rail_scale), "Alignment Grid", &overlay_grid);
+    GUI_Checkbox(renderer, (int)right_inner, (int)(content_y + 320.0f * rail_scale), "Tracking Bounding Box", &overlay_box);
+    GUI_Checkbox(renderer, (int)right_inner, (int)(content_y + 344.0f * rail_scale), "Error Vector", &overlay_error);
+    divider(renderer, right_inner, content_y + 378.0f * rail_scale, right_width);
+    section(renderer, right_inner, content_y + 400.0f * rail_scale, "REAL-TIME METRICS");
+    snprintf(text, sizeof(text), "%.1f px", cv->pixel_error); metric(renderer, right_inner, content_y + 416.0f * rail_scale, right_width, "Tracking Error", text, cv->pixel_error < 10.0f ? "Nominal" : "Outside tolerance", cv->pixel_error >= 10.0f);
+    snprintf(text, sizeof(text), "%.1f%%", cv->confidence * 100.0f); metric(renderer, right_inner, content_y + 476.0f * rail_scale, right_width, "Target Loss", text, cv->detected ? "Stable" : "Threshold < 5.0%", !cv->detected);
+    snprintf(text, sizeof(text), "%.1f ms", profiler->milliseconds[PROFILER_CV]); metric(renderer, right_inner, content_y + 536.0f * rail_scale, right_width, "Acquisition", text, "Fast lock", false);
+    text_at(renderer, right_inner, content_y + layout.main_height - 28.0f, cv->detected ? "Active Lock" : "Searching", COLOR_LIME);
+    snprintf(text, sizeof(text), "%.1f Hz", fps); text_at(renderer, right_inner + right_width - 56.0f, content_y + layout.main_height - 28.0f, text, COLOR_MUTED);
+    GUI_DrawDropdownOverlay(renderer);
     SDL_RenderPresent(renderer);
 }
