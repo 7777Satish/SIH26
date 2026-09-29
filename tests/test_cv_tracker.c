@@ -17,7 +17,7 @@ static void beacon(FrameBuffer_t *frame, int x, int y)
 
 int main(void)
 {
-    const SimConfig_t config = { 70.0f, 5.0f, 5.0f, 0.0f, 0.0f, 0.025f, 0.0002f, 0.006f, false, false, false, MOTION_LINEAR };
+    const SimConfig_t config = { 70.0f, 0.0f, 5.0f, 5.0f, 0.0f, 0.0f, 0.025f, 0.0002f, 0.006f, false, false, false, false, MOTION_LINEAR, TARGET_SINGLE, TARGET_CENTER, TARGET_SQUARE };
     FrameBuffer_t frame = { { 0 }, FRAME_WIDTH, FRAME_HEIGHT };
     CVTracker_Reset();
 

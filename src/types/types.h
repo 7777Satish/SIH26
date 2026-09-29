@@ -16,8 +16,26 @@ typedef enum MotionPattern {
     MOTION_RANDOM
 } MotionPattern_t;
 
+typedef enum TargetMode {
+    TARGET_SINGLE = 0,
+    TARGET_MULTI
+} TargetMode_t;
+
+typedef enum TargetPosition {
+    TARGET_CENTER = 0,
+    TARGET_UPPER_LEFT,
+    TARGET_LOWER_RIGHT
+} TargetPosition_t;
+
+typedef enum TargetShape {
+    TARGET_SQUARE = 0,
+    TARGET_CIRCLE,
+    TARGET_WIDE
+} TargetShape_t;
+
 typedef struct SimConfig {
     float target_speed;
+    float platform_jitter;
     float max_pan_speed;
     float max_tilt_speed;
     float noise_intensity;
@@ -27,8 +45,12 @@ typedef struct SimConfig {
     float kd;
     bool gaussian_noise;
     bool salt_pepper_noise;
+    bool poisson_noise;
     bool manual_target;
     MotionPattern_t motion_pattern;
+    TargetMode_t target_mode;
+    TargetPosition_t target_position;
+    TargetShape_t target_shape;
 } SimConfig_t;
 
 typedef struct SimState {

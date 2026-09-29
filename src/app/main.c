@@ -69,7 +69,7 @@ int main(void)
 		SDL_Quit();
 		return 1;
 	}
-	SimConfig_t config = { 70.0f, 5.0f, 5.0f, 18.0f, 0.12f, 0.025f, 0.0002f, 0.006f, true, true, false, MOTION_CIRCULAR };
+	SimConfig_t config = { 70.0f, 5.0f, 5.0f, 5.0f, 18.0f, 0.12f, 0.025f, 0.0002f, 0.006f, true, true, false, false, MOTION_CIRCULAR, TARGET_SINGLE, TARGET_CENTER, TARGET_SQUARE };
 	SimState_t state = { 1650.0f, 1000.0f, 1650.0f, 1000.0f, 0.0f, 0.0f, 0.0f };
 	FrameBuffer_t frame = { { 0 }, FRAME_WIDTH, FRAME_HEIGHT };
 	CVResult_t cv = { 0 };

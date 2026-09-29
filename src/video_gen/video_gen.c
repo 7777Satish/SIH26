@@ -35,8 +35,30 @@ void VideoGen_UpdateTarget(const SimConfig_t *config, SimState_t *state, float d
         state->true_target_x += config->target_speed * delta_seconds * 2.2f;
         state->true_target_y = 1000.0f + sinf(state->simulation_time * 0.7f) * 360.0f;
     }
+    const float jitter_step = config->platform_jitter * delta_seconds * 60.0f;
+    state->true_target_x += random_signed() * jitter_step;
+    state->true_target_y += random_signed() * jitter_step;
     state->true_target_x = clamp_float(state->true_target_x, 30.0f, WORLD_SIZE - 30.0f);
     state->true_target_y = clamp_float(state->true_target_y, 30.0f, WORLD_SIZE - 30.0f);
+}
+
+static void draw_beacon(const SimConfig_t *config, FrameBuffer_t *frame, int center_x, int center_y)
+{
+    if (config->target_shape == TARGET_WIDE) {
+        for (int y = center_y - 4; y <= center_y + 4; ++y) {
+            for (int x = center_x - 10; x <= center_x + 10; ++x) {
+                if (x >= 0 && x < FRAME_WIDTH && y >= 0 && y < FRAME_HEIGHT) frame->pixels[y * FRAME_WIDTH + x] = 255;
+            }
+        }
+        return;
+    }
+    for (int y = center_y - 5; y <= center_y + 5; ++y) {
+        for (int x = center_x - 5; x <= center_x + 5; ++x) {
+            if (x < 0 || x >= FRAME_WIDTH || y < 0 || y >= FRAME_HEIGHT) continue;
+            if (config->target_shape == TARGET_CIRCLE && (x - center_x) * (x - center_x) + (y - center_y) * (y - center_y) > 30) continue;
+            frame->pixels[y * FRAME_WIDTH + x] = 255;
+        }
+    }
 }
 
 void VideoGen_MoveTarget(SimState_t *state, float delta_x, float delta_y)
@@ -64,14 +86,9 @@ void VideoGen_Generate(const SimConfig_t *config, const SimState_t *state, Frame
         }
     }
 
-    const int beacon_x = (int)(state->true_target_x - left);
-    const int beacon_y = (int)(state->true_target_y - top);
-    for (int y = beacon_y - 5; y <= beacon_y + 5; ++y) {
-        for (int x = beacon_x - 5; x <= beacon_x + 5; ++x) {
-            if (x >= 0 && x < FRAME_WIDTH && y >= 0 && y < FRAME_HEIGHT) {
-                frame->pixels[y * FRAME_WIDTH + x] = 255;
-            }
-        }
+    draw_beacon(config, frame, (int)(state->true_target_x - left), (int)(state->true_target_y - top));
+    if (config->target_mode == TARGET_MULTI) {
+        draw_beacon(config, frame, (int)(WORLD_SIZE - state->true_target_x - left), (int)(WORLD_SIZE - state->true_target_y - top));
     }
 
     if (config->salt_pepper_noise) {
@@ -80,6 +97,12 @@ void VideoGen_Generate(const SimConfig_t *config, const SimState_t *state, Frame
             const int x = (int)(random_unit() * FRAME_WIDTH);
             const int y = (int)(random_unit() * FRAME_HEIGHT);
             frame->pixels[y * FRAME_WIDTH + x] = random_unit() > 0.5f ? 255 : 0;
+        }
+    }
+    if (config->poisson_noise) {
+        for (int i = 0; i < FRAME_PIXELS; ++i) {
+            const float value = frame->pixels[i];
+            frame->pixels[i] = (uint8_t)clamp_float(value + random_signed() * sqrtf(value + 1.0f) * 2.0f, 0.0f, 255.0f);
         }
     }
 }

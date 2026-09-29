@@ -73,6 +73,13 @@ static bool inside(int x, int y, int width, int height)
     return mouse_x >= x && mouse_x <= x + width && mouse_y >= y && mouse_y <= y + height;
 }
 
+static bool label_inside(int x, int y, const char *label)
+{
+    int width;
+    int height;
+    return body_font != NULL && TTF_GetStringSize(body_font, label, 0, &width, &height) && inside(x, y, width, height + 4);
+}
+
 void GUI_Begin(SDL_Renderer *renderer)
 {
     float window_x;
@@ -138,13 +145,13 @@ bool GUI_Dropdown(SDL_Renderer *renderer, int x, int y, int width, int height, c
     dropdown_x = x;
     dropdown_y = y;
     dropdown_width = width;
-    dropdown_height = height;
+    dropdown_height = padded_height;
     dropdown_options = options;
     dropdown_option_count = option_count;
     dropdown_selected = selected;
     const int option_height = padded_height;
     for (int option = 0; option < option_count; ++option) {
-        const int option_y = y + height + option * option_height;
+        const int option_y = y + padded_height + option * option_height;
         const bool option_hover = inside(x, option_y, width, option_height);
         if (option_hover && mouse_down && !previous_mouse_down) {
             *selected = option;
@@ -193,7 +200,7 @@ bool GUI_Slider(SDL_Renderer *renderer, int x, int y, int width, const char *lab
 
 bool GUI_Toggle(SDL_Renderer *renderer, int x, int y, const char *label, bool *value)
 {
-    const bool hover = inside(x, y, 38, 24);
+    const bool hover = inside(x, y, 38, 24) || label_inside(x + 48, y + 5, label);
     const bool clicked = hover && mouse_down && !previous_mouse_down;
     if (clicked) *value = !*value;
     rounded_fill(renderer, (float)x, (float)y, 38.0f, 24.0f, 9.0f, *value ? (SDL_Color){ 82, 73, 39, 255 } : (SDL_Color){ 38, 20, 29, 255 });
@@ -205,7 +212,7 @@ bool GUI_Toggle(SDL_Renderer *renderer, int x, int y, const char *label, bool *v
 
 bool GUI_Checkbox(SDL_Renderer *renderer, int x, int y, const char *label, bool *value)
 {
-    const bool hover = inside(x, y, 14, 14);
+    const bool hover = inside(x, y, 14, 14) || label_inside(x + 19, y - 1, label);
     const bool clicked = hover && mouse_down && !previous_mouse_down;
     if (clicked) *value = !*value;
     rounded_fill(renderer, (float)x, (float)y, 13.0f, 13.0f, 3.0f, *value ? (SDL_Color){ 207, 238, 75, 255 } : (SDL_Color){ 38, 20, 29, 255 });

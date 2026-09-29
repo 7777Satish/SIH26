@@ -17,9 +17,7 @@ static SDL_Texture *icon_back;
 static SDL_Texture *icon_forward;
 static SDL_Texture *icon_restore;
 static SDL_Texture *icon_reload;
-static int target_mode;
-static int target_position;
-static int target_shape;
+static int last_target_position = -1;
 static bool environment_view = true;
 static bool fit_view = true;
 static bool overlay_grid = true;
@@ -27,6 +25,9 @@ static bool overlay_box = true;
 static bool overlay_error = true;
 static bool timeline_playing = true;
 static float timeline_position;
+#define CHART_POINTS 96
+static float chart_history[3][CHART_POINTS];
+static int chart_samples;
 
 static const char *const TARGET_POSITIONS[] = { "Center", "Upper Left", "Lower Right" };
 static const char *const TARGET_SHAPES[] = { "Square 10x10 px", "Circle 10 px", "Wide 20x8 px" };
@@ -195,21 +196,89 @@ static void metric(SDL_Renderer *renderer, float x, float y, float width, const 
     text_at(renderer, x + 10.0f, y + 30.0f, detail, warning ? COLOR_RED : COLOR_MUTED);
 }
 
+static void record_chart_sample(const SimConfig_t *config, const CVResult_t *cv, const ProfilerState_t *profiler)
+{
+    const float sample[3] = {
+        profiler->milliseconds[PROFILER_VIDEO],
+        cv->confidence,
+        config->noise_intensity
+    };
+    if (chart_samples == 0) {
+        for (int row = 0; row < 3; ++row) {
+            for (int point = 0; point < CHART_POINTS; ++point) chart_history[row][point] = sample[row];
+        }
+        chart_samples = CHART_POINTS;
+        return;
+    }
+    for (int row = 0; row < 3; ++row) {
+        for (int point = 1; point < CHART_POINTS; ++point) chart_history[row][point - 1] = chart_history[row][point];
+        chart_history[row][CHART_POINTS - 1] = sample[row];
+    }
+}
+
+static void draw_chart_row(SDL_Renderer *renderer, float x, float y, float width, float height, int row, float maximum, SDL_Color color)
+{
+    GUI_SetColor(renderer, COLOR_GRID);
+    SDL_RenderLine(renderer, x, y + height, x + width, y + height);
+    GUI_SetColor(renderer, color);
+    SDL_FPoint points[CHART_POINTS];
+    for (int point = 0; point < CHART_POINTS; ++point) {
+        const float normalized = chart_history[row][point] / maximum;
+        const float clamped = normalized < 0.0f ? 0.0f : (normalized > 1.0f ? 1.0f : normalized);
+        points[point] = (SDL_FPoint){ x + width * point / (CHART_POINTS - 1), y + height - clamped * height };
+    }
+    SDL_RenderLines(renderer, points, CHART_POINTS);
+}
+
 static void reset_configuration(SimConfig_t *config, SimState_t *state)
 {
+    config->target_speed = 70.0f;
     config->max_pan_speed = 5.0f;
     config->max_tilt_speed = 5.0f;
+    config->platform_jitter = 5.0f;
     config->noise_intensity = 18.0f;
     config->haze_level = 0.12f;
     config->gaussian_noise = true;
     config->salt_pepper_noise = true;
+    config->poisson_noise = false;
     config->manual_target = false;
+    config->kp = 0.025f;
+    config->ki = 0.0002f;
+    config->kd = 0.006f;
     config->motion_pattern = MOTION_CIRCULAR;
-    target_mode = 0;
-    target_position = 0;
-    target_shape = 0;
+    config->target_mode = TARGET_SINGLE;
+    config->target_position = TARGET_CENTER;
+    config->target_shape = TARGET_SQUARE;
+    last_target_position = -1;
     state->true_target_x = WORLD_SIZE * 0.5f;
     state->true_target_y = WORLD_SIZE * 0.5f;
+    state->camera_pan = WORLD_SIZE * 0.5f;
+    state->camera_tilt = WORLD_SIZE * 0.5f;
+    state->pan_velocity = 0.0f;
+    state->tilt_velocity = 0.0f;
+    state->simulation_time = 0.0f;
+    environment_view = true;
+    fit_view = true;
+    overlay_grid = true;
+    overlay_box = true;
+    overlay_error = true;
+    timeline_playing = true;
+    timeline_position = 0.0f;
+    chart_samples = 0;
+}
+
+static void apply_target_position(const SimConfig_t *config, SimState_t *state)
+{
+    if (config->target_position == TARGET_UPPER_LEFT) {
+        state->true_target_x = WORLD_SIZE * 0.25f;
+        state->true_target_y = WORLD_SIZE * 0.25f;
+    } else if (config->target_position == TARGET_LOWER_RIGHT) {
+        state->true_target_x = WORLD_SIZE * 0.75f;
+        state->true_target_y = WORLD_SIZE * 0.75f;
+    } else {
+        state->true_target_x = WORLD_SIZE * 0.5f;
+        state->true_target_y = WORLD_SIZE * 0.5f;
+    }
 }
 
 SDL_Texture *Renderer_CreateFeedTexture(SDL_Renderer *renderer)
@@ -263,11 +332,16 @@ void Renderer_DrawDashboard(SDL_Renderer *renderer, SDL_Texture *feed_texture, c
     const float content_y = layout.main_y;
     const float center_x = layout.center_x;
     const float right_x = layout.right_x;
-    const float rail_scale = min_float(1.22f, layout.main_height / 580.0f);
+    const float rail_scale = min_float(1.14f, layout.main_height / 600.0f);
     const float timeline_height = min_float(220.0f, layout.main_height * 0.32f);
     const float camera_height = layout.main_height - timeline_height - layout.gap;
+    if (last_target_position != (int)config->target_position) {
+        apply_target_position(config, state);
+        last_target_position = config->target_position;
+    }
     if (timeline_playing) timeline_position += fps > 0.0f ? 1.0f / fps : 0.0f;
     if (timeline_position > 150.0f) timeline_position = 0.0f;
+    if (timeline_playing) record_chart_sample(config, cv, profiler);
 
     GUI_SetColor(renderer, COLOR_BACKGROUND);
     SDL_RenderClear(renderer);
@@ -278,27 +352,28 @@ void Renderer_DrawDashboard(SDL_Renderer *renderer, SDL_Texture *feed_texture, c
     section_panel(renderer, (SDL_FRect){ left_x, content_y, layout.left, layout.main_height }, COLOR_SURFACE);
     section(renderer, left_inner, content_y + 20.0f * rail_scale, "SIMULATION & TARGET");
     text_at(renderer, left_inner, content_y + 48.0f * rail_scale, "Target Mode", COLOR_MUTED);
-    text_at(renderer, left_inner + left_width * 0.62f, content_y + 48.0f * rail_scale, "Single Beacon", COLOR_TEXT);
-    if (GUI_ChoiceButton(renderer, (int)left_inner, (int)(content_y + 72.0f * rail_scale), (int)(left_width * 0.5f), 26, "Single", target_mode == 0)) target_mode = 0;
-    if (GUI_ChoiceButton(renderer, (int)(left_inner + left_width * 0.5f), (int)(content_y + 72.0f * rail_scale), (int)(left_width * 0.5f), 26, "Multi", target_mode == 1)) target_mode = 1;
+        text_at(renderer, left_inner + left_width * 0.62f, content_y + 48.0f * rail_scale, config->target_mode == TARGET_SINGLE ? "Single Beacon" : "Multi Beacon", COLOR_TEXT);
+        if (GUI_ChoiceButton(renderer, (int)left_inner, (int)(content_y + 72.0f * rail_scale), (int)(left_width * 0.5f), 26, "Single", config->target_mode == TARGET_SINGLE)) config->target_mode = TARGET_SINGLE;
+        if (GUI_ChoiceButton(renderer, (int)(left_inner + left_width * 0.5f), (int)(content_y + 72.0f * rail_scale), (int)(left_width * 0.5f), 26, "Multi", config->target_mode == TARGET_MULTI)) config->target_mode = TARGET_MULTI;
     text_at(renderer, left_inner, content_y + 122.0f * rail_scale, "Target Shape", COLOR_MUTED);
-    GUI_Dropdown(renderer, (int)(left_inner + left_width * 0.48f), (int)(content_y + 114.0f * rail_scale), (int)(left_width * 0.52f), 28, TARGET_SHAPES[target_shape], TARGET_SHAPES, 3, &target_shape, 3);
+    GUI_Dropdown(renderer, (int)(left_inner + left_width * 0.48f), (int)(content_y + 114.0f * rail_scale), (int)(left_width * 0.52f), 28, TARGET_SHAPES[config->target_shape], TARGET_SHAPES, 3, (int *)&config->target_shape, 3);
     text_at(renderer, left_inner, content_y + 188.0f * rail_scale, "Initial Position", COLOR_MUTED);
-    GUI_Dropdown(renderer, (int)left_inner, (int)(content_y + 220.0f * rail_scale), (int)left_width, 32, TARGET_POSITIONS[target_position], TARGET_POSITIONS, 3, &target_position, 1);
+    GUI_Dropdown(renderer, (int)left_inner, (int)(content_y + 220.0f * rail_scale), (int)left_width, 32, TARGET_POSITIONS[config->target_position], TARGET_POSITIONS, 3, (int *)&config->target_position, 1);
     text_at(renderer, left_inner, content_y + 276.0f * rail_scale, "Motion Pattern", COLOR_MUTED);
     GUI_Dropdown(renderer, (int)left_inner, (int)(content_y + 304.0f * rail_scale), (int)left_width, 32, MOTION_PATTERNS[config->motion_pattern], MOTION_PATTERNS, 3, (int *)&config->motion_pattern, 2);
     divider(renderer, left_inner, content_y + 354.0f * rail_scale, left_width);
     section(renderer, left_inner, content_y + 378.0f * rail_scale, "DISTURBANCES & NOISE");
-    text_at(renderer, left_inner, content_y + 410.0f * rail_scale, "Image Noise", COLOR_MUTED);
-    GUI_Checkbox(renderer, (int)left_inner, (int)(content_y + 434.0f * rail_scale), "Salt&P", &config->salt_pepper_noise);
-    GUI_Checkbox(renderer, (int)(left_inner + left_width * 0.46f), (int)(content_y + 434.0f * rail_scale), "Gauss", &config->gaussian_noise);
-    GUI_Checkbox(renderer, (int)(left_inner + left_width * 0.82f), (int)(content_y + 434.0f * rail_scale), "Poisson", &overlay_error);
-    text_at(renderer, left_inner, content_y + 470.0f * rail_scale, "Atmosphere", COLOR_MUTED);
-    text_at(renderer, left_inner + left_width * 0.82f, content_y + 470.0f * rail_scale, "Haze", COLOR_LIME);
-    if (GUI_ChoiceButton(renderer, (int)left_inner, (int)(content_y + 494.0f * rail_scale), (int)(left_width / 3.0f), 26, "Clear", config->haze_level == 0.0f)) config->haze_level = 0.0f;
-    if (GUI_ChoiceButton(renderer, (int)(left_inner + left_width / 3.0f), (int)(content_y + 494.0f * rail_scale), (int)(left_width / 3.0f), 26, "Haze", config->haze_level > 0.0f && config->haze_level < 0.4f)) config->haze_level = 0.12f;
-    if (GUI_ChoiceButton(renderer, (int)(left_inner + left_width * 2.0f / 3.0f), (int)(content_y + 494.0f * rail_scale), (int)(left_width / 3.0f), 26, "Fog", config->haze_level >= 0.4f)) config->haze_level = 0.5f;
-    GUI_Slider(renderer, (int)left_inner, (int)(content_y + 546.0f * rail_scale), (int)left_width, "Platform Jitter", &config->noise_intensity, 0.0f, 100.0f);
+    text_at(renderer, left_inner, content_y + 394.0f * rail_scale, "Image Noise", COLOR_MUTED);
+    GUI_Slider(renderer, (int)left_inner, (int)(content_y + 418.0f * rail_scale), (int)left_width, "", &config->noise_intensity, 0.0f, 100.0f);
+    GUI_Checkbox(renderer, (int)left_inner, (int)(content_y + 456.0f * rail_scale), "Salt&P", &config->salt_pepper_noise);
+    GUI_Checkbox(renderer, (int)(left_inner + left_width * 0.46f), (int)(content_y + 456.0f * rail_scale), "Gauss", &config->gaussian_noise);
+    GUI_Checkbox(renderer, (int)(left_inner + left_width * 0.82f), (int)(content_y + 456.0f * rail_scale), "Poisson", &config->poisson_noise);
+    text_at(renderer, left_inner, content_y + 492.0f * rail_scale, "Atmosphere", COLOR_MUTED);
+    text_at(renderer, left_inner + left_width * 0.82f, content_y + 492.0f * rail_scale, "Haze", COLOR_LIME);
+    if (GUI_ChoiceButton(renderer, (int)left_inner, (int)(content_y + 516.0f * rail_scale), (int)(left_width / 3.0f), 26, "Clear", config->haze_level == 0.0f)) config->haze_level = 0.0f;
+    if (GUI_ChoiceButton(renderer, (int)(left_inner + left_width / 3.0f), (int)(content_y + 516.0f * rail_scale), (int)(left_width / 3.0f), 26, "Haze", config->haze_level > 0.0f && config->haze_level < 0.4f)) config->haze_level = 0.12f;
+    if (GUI_ChoiceButton(renderer, (int)(left_inner + left_width * 2.0f / 3.0f), (int)(content_y + 516.0f * rail_scale), (int)(left_width / 3.0f), 26, "Fog", config->haze_level >= 0.4f)) config->haze_level = 0.5f;
+    GUI_Slider(renderer, (int)left_inner, (int)(content_y + 566.0f * rail_scale), (int)left_width, "Platform Jitter", &config->platform_jitter, 0.0f, 40.0f);
     const int footer_y = (int)(content_y + layout.main_height - pad - 32.0f);
     if (GUI_Button(renderer, (int)left_inner, footer_y, (int)(left_width * 0.58f), 28, "Reset Configuration")) reset_configuration(config, state);
     GUI_Toggle(renderer, (int)(left_inner + left_width * 0.62f), footer_y + 4, "Manual", &config->manual_target);
@@ -324,11 +399,14 @@ void Renderer_DrawDashboard(SDL_Renderer *renderer, SDL_Texture *feed_texture, c
         if (grid < 8) SDL_RenderLine(renderer, map_x, y, map_x + map_width, y);
     }
     if (environment_view) {
-        const float map_scale = min_float(map_width / WORLD_SIZE, map_height / WORLD_SIZE);
-        const float target_x = map_x + state->true_target_x * map_scale;
-        const float target_y = map_y + state->true_target_y * map_scale;
-        const float camera_x = map_x + (state->camera_pan - FRAME_WIDTH * 0.5f) * map_scale;
-        const float camera_y = map_y + (state->camera_tilt - FRAME_HEIGHT * 0.5f) * map_scale;
+        const float fit_scale = min_float(map_width / WORLD_SIZE, map_height / WORLD_SIZE);
+        const float map_scale = fit_view ? fit_scale : fit_scale * 1.25f;
+        const float map_origin_x = map_x + (map_width - WORLD_SIZE * map_scale) * 0.5f;
+        const float map_origin_y = map_y + (map_height - WORLD_SIZE * map_scale) * 0.5f;
+        const float target_x = map_origin_x + state->true_target_x * map_scale;
+        const float target_y = map_origin_y + state->true_target_y * map_scale;
+        const float camera_x = map_origin_x + (state->camera_pan - FRAME_WIDTH * 0.5f) * map_scale;
+        const float camera_y = map_origin_y + (state->camera_tilt - FRAME_HEIGHT * 0.5f) * map_scale;
         const SDL_FRect camera_frame = { camera_x, camera_y, FRAME_WIDTH * map_scale, FRAME_HEIGHT * map_scale };
         GUI_SetColor(renderer, COLOR_LIME_DIM);
         SDL_RenderRect(renderer, &camera_frame);
@@ -336,12 +414,21 @@ void Renderer_DrawDashboard(SDL_Renderer *renderer, SDL_Texture *feed_texture, c
         SDL_RenderFillRect(renderer, &(SDL_FRect){ target_x - 9.0f, target_y - 9.0f, 18.0f, 18.0f });
         text_at(renderer, map_x + 10.0f, map_y + 10.0f, cv->detected ? "TRACKING LOCK" : "SEARCHING", cv->detected ? COLOR_LIME : COLOR_YELLOW);
     }
+    if (!environment_view && overlay_box && cv->detected) {
+        const float detected_x = map_x + cv->centroid_x * map_width / FRAME_WIDTH;
+        const float detected_y = map_y + cv->centroid_y * map_height / FRAME_HEIGHT;
+        GUI_SetColor(renderer, COLOR_LIME);
+        SDL_RenderRect(renderer, &(SDL_FRect){ detected_x - 12.0f, detected_y - 12.0f, 24.0f, 24.0f });
+        if (overlay_error) SDL_RenderLine(renderer, map_x + map_width * 0.5f, map_y + map_height * 0.5f, detected_x, detected_y);
+    }
 
     section_panel(renderer, (SDL_FRect){ center_x, content_y + camera_height + layout.gap, layout.center, timeline_height }, COLOR_SURFACE);
     const float timeline_y = content_y + camera_height + layout.gap;
     const float timeline_pad = max_float(24.0f, pad);
     const float transport_y = timeline_y + 18.0f;
-    text_at(renderer, center_x + timeline_pad, timeline_y + 24.0f, "04:34.27", COLOR_LIME);
+    const int timeline_seconds = (int)timeline_position;
+    snprintf(text, sizeof(text), "%02d:%02d.%02d", timeline_seconds / 60, timeline_seconds % 60, (int)(timeline_position * 100.0f) % 100);
+    text_at(renderer, center_x + timeline_pad, timeline_y + 24.0f, text, COLOR_LIME);
     text_at(renderer, center_x + timeline_pad + 88.0f, timeline_y + 24.0f, "/ 02:30.00", COLOR_MUTED);
     const float transport_center = center_x + layout.center * 0.5f;
     const float previous_x = transport_center - 66.0f;
@@ -359,17 +446,17 @@ void Renderer_DrawDashboard(SDL_Renderer *renderer, SDL_Texture *feed_texture, c
     const float track_y = timeline_y + 82.0f;
     const float track_width = layout.center - timeline_pad * 2.0f;
     text_at(renderer, track_x, track_y, "00:00              00:30              01:00              01:30              02:00              02:30", COLOR_MUTED);
+    const float chart_x = track_x + 102.0f;
+    const float chart_width = track_width - 102.0f;
     text_at(renderer, track_x, track_y + 28.0f, "Video Feed", COLOR_TEXT);
     text_at(renderer, track_x, track_y + 56.0f, "Tracking Lock", COLOR_TEXT);
     text_at(renderer, track_x, track_y + 84.0f, "Disturbance", COLOR_TEXT);
-    GUI_SetColor(renderer, COLOR_SURFACE_RAISED);
-    SDL_RenderFillRect(renderer, &(SDL_FRect){ track_x + 102.0f, track_y + 34.0f, track_width - 102.0f, 12.0f });
-    SDL_RenderFillRect(renderer, &(SDL_FRect){ track_x + 102.0f, track_y + 62.0f, track_width - 102.0f, 12.0f });
-    SDL_RenderFillRect(renderer, &(SDL_FRect){ track_x + 102.0f, track_y + 90.0f, track_width - 102.0f, 12.0f });
-    GUI_SetColor(renderer, COLOR_LIME_DIM);
-    SDL_RenderFillRect(renderer, &(SDL_FRect){ track_x + 102.0f, track_y + 62.0f, track_width * 0.64f, 12.0f });
+    draw_chart_row(renderer, chart_x, track_y + 20.0f, chart_width, 18.0f, 0, 10.0f, COLOR_LIME_DIM);
+    draw_chart_row(renderer, chart_x, track_y + 48.0f, chart_width, 18.0f, 1, 1.0f, COLOR_LIME);
+    draw_chart_row(renderer, chart_x, track_y + 76.0f, chart_width, 18.0f, 2, 100.0f, COLOR_YELLOW);
+    const float progress_width = chart_width * (timeline_position / 150.0f);
     GUI_SetColor(renderer, COLOR_LIME);
-    SDL_RenderLine(renderer, track_x + track_width, track_y + 4.0f, track_x + track_width, track_y + 80.0f);
+    SDL_RenderLine(renderer, chart_x + progress_width, track_y + 4.0f, chart_x + progress_width, track_y + 108.0f);
 
     section_panel(renderer, (SDL_FRect){ right_x, content_y, layout.right, layout.main_height }, COLOR_SURFACE);
     const float right_inner = right_x + pad;
@@ -392,8 +479,8 @@ void Renderer_DrawDashboard(SDL_Renderer *renderer, SDL_Texture *feed_texture, c
     GUI_Checkbox(renderer, (int)right_inner, (int)(content_y + 356.0f * rail_scale), "Error Vector", &overlay_error);
     divider(renderer, right_inner, content_y + 390.0f * rail_scale, right_width);
     section(renderer, right_inner, content_y + 400.0f * rail_scale, "REAL-TIME METRICS");
-    snprintf(text, sizeof(text), "%.1f px", cv->pixel_error); metric(renderer, right_inner, content_y + 432.0f * rail_scale, right_width, "Tracking Error", text, cv->pixel_error < 10.0f ? "Nominal" : "Outside tolerance", cv->pixel_error >= 10.0f);
-    snprintf(text, sizeof(text), "%.1f%%", cv->confidence * 100.0f); metric(renderer, right_inner, content_y + 492.0f * rail_scale, right_width, "Target Loss", text, cv->detected ? "Stable" : "Threshold < 5.0%", !cv->detected);
+    snprintf(text, sizeof(text), "%.0f%%", cv->confidence * 100.0f); metric(renderer, right_inner, content_y + 432.0f * rail_scale, right_width, "Detection Confidence", text, cv->detected ? "Nominal" : "Searching", !cv->detected);
+    snprintf(text, sizeof(text), "%.1f px", cv->pixel_error); metric(renderer, right_inner, content_y + 492.0f * rail_scale, right_width, "Tracking Error", text, cv->pixel_error < 10.0f ? "Nominal" : "Outside tolerance", cv->pixel_error >= 10.0f);
     snprintf(text, sizeof(text), "%.1f ms", profiler->milliseconds[PROFILER_CV]); metric(renderer, right_inner, content_y + 552.0f * rail_scale, right_width, "Acquisition", text, "Fast lock", false);
     text_at(renderer, right_inner, content_y + layout.main_height - 28.0f, cv->detected ? "Active Lock" : "Searching", COLOR_LIME);
     snprintf(text, sizeof(text), "%.1f Hz", fps); text_at(renderer, right_inner + right_width - 56.0f, content_y + layout.main_height - 28.0f, text, COLOR_MUTED);
