@@ -58,7 +58,11 @@ static void centered_label(SDL_Renderer *renderer, int x, int y, int width, int 
     if (surface == NULL) return;
     SDL_Texture *texture = SDL_CreateTextureFromSurface(renderer, surface);
     if (texture != NULL) {
-        SDL_RenderTexture(renderer, texture, NULL, &(SDL_FRect){ (float)(x + (width - text_width) / 2), (float)(y + (height - text_height) / 2), (float)surface->w, (float)surface->h });
+        const int content_width = width - 16;
+        const float scale = text_width > content_width ? (float)content_width / (float)text_width : 1.0f;
+        const float drawn_width = surface->w * scale;
+        const float drawn_height = surface->h * scale;
+        SDL_RenderTexture(renderer, texture, NULL, &(SDL_FRect){ x + (width - drawn_width) * 0.5f, y + (height - drawn_height) * 0.5f, drawn_width, drawn_height });
         SDL_DestroyTexture(texture);
     }
     SDL_DestroySurface(surface);
@@ -128,7 +132,7 @@ bool GUI_Dropdown(SDL_Renderer *renderer, int x, int y, int width, int height, c
     if (field_clicked) open_dropdown = open_dropdown == id ? -1 : id;
     rounded_fill(renderer, (float)x, (float)y, (float)width, (float)padded_height, 6.0f, (SDL_Color){ 38, 20, 29, 255 });
     rounded_outline(renderer, (float)x, (float)y, (float)width, (float)padded_height, 6.0f, field_hover ? (SDL_Color){ 142, 124, 62, 255 } : (SDL_Color){ 69, 38, 51, 255 });
-    GUI_Label(renderer, x + 10, y + 8, value);
+    centered_label(renderer, x + 8, y + 2, width - 16, padded_height - 4, value, (SDL_Color){ 206, 187, 193, 255 });
     if (open_dropdown != id) return field_clicked;
     dropdown_visible = true;
     dropdown_x = x;
@@ -169,7 +173,7 @@ void GUI_DrawDropdownOverlay(SDL_Renderer *renderer)
 bool GUI_Slider(SDL_Renderer *renderer, int x, int y, int width, const char *label, float *value, float min, float max)
 {
     char value_text[64];
-    const bool hover = inside(x, y, width, 24);
+    const bool hover = inside(x, y, width, 34);
     if (hover && mouse_down) {
         float ratio = (mouse_x - x) / (float)width;
         if (ratio < 0.0f) ratio = 0.0f;
@@ -177,15 +181,13 @@ bool GUI_Slider(SDL_Renderer *renderer, int x, int y, int width, const char *lab
         *value = min + ratio * (max - min);
     }
     GUI_Label(renderer, x, y, label);
-    SDL_FRect track = { (float)x, (float)(y + 20), (float)width, 3.0f };
-    GUI_SetColor(renderer, (SDL_Color){ 35, 59, 72, 255 });
-    SDL_RenderFillRect(renderer, &track);
+    SDL_FRect track = { (float)x, (float)(y + 27), (float)width, 4.0f };
+    rounded_fill(renderer, track.x, track.y, track.w, track.h, 2.0f, (SDL_Color){ 69, 38, 51, 255 });
     const float ratio = (*value - min) / (max - min);
-    SDL_FRect knob = { (float)(x + ratio * width - 4), (float)(y + 16), 8.0f, 11.0f };
-    GUI_SetColor(renderer, (SDL_Color){ 117, 225, 218, 255 });
-    SDL_RenderFillRect(renderer, &knob);
+    rounded_fill(renderer, track.x, track.y, track.w * ratio, track.h, 2.0f, (SDL_Color){ 117, 126, 44, 255 });
+    rounded_fill(renderer, (float)(x + ratio * width - 6), (float)(y + 23), 12.0f, 12.0f, 6.0f, (SDL_Color){ 207, 238, 75, 255 });
     snprintf(value_text, sizeof(value_text), "%.1f", *value);
-    GUI_Label(renderer, x + width + 12, y, value_text);
+    centered_label(renderer, x + width - 50, y, 50, 18, value_text, (SDL_Color){ 207, 238, 75, 255 });
     return hover && mouse_down;
 }
 
