@@ -3,12 +3,12 @@
 #include <stdbool.h>
 #include <stdio.h>
 
-#include "types.h"
-#include "profiler.h"
-#include "video_gen.h"
-#include "cv_tracker.h"
-#include "renderer.h"
-#include "predictor_bridge.h"
+#include "types/types.h"
+#include "profiler/profiler.h"
+#include "video_gen/video_gen.h"
+#include "cv_tracker/cv_tracker.h"
+#include "renderer/renderer.h"
+#include "predictor_bridge/predictor_bridge.h"
 
 static float previous_frame_seconds;
 static bool search_active;

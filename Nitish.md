@@ -8,14 +8,14 @@ The project is a C11 SDL3 simulation of a virtual camera tracking a bright targe
 
 ## Existing Architecture
 
-- `src/main.c`: SDL startup, event loop, simulation loop, camera actuation, predictor bridge integration, and fullscreen handling.
-- `src/video_gen.c/.h`: target motion, manual target movement, synthetic camera-frame generation, Gaussian noise, haze, and salt-and-pepper noise.
-- `src/cv_tracker.c/.h`: bright-target detection, connected-component filtering, motion estimation, prediction, adaptive ROI, PID control, confidence, and lost-target state.
-- `src/types.h`: shared configuration, simulation state, frame buffer, tracker result, and profiler data structures.
-- `src/renderer.c/.h`: dashboard layout, global-world map, camera feed, tracking overlays, telemetry, and visual status.
-- `src/gui.c/.h`: lightweight SDL controls, sliders, toggles, buttons, active mode buttons, and logical mouse-coordinate handling.
-- `src/profiler.c/.h`: frame and pipeline timing measurements.
-- `src/predictor_bridge.c/.h`: optional non-blocking C/Python UDP interface.
+- `src/app/main.c`: SDL startup, event loop, simulation loop, camera actuation, predictor bridge integration, and fullscreen handling.
+- `src/video_gen/video_gen.c/.h`: target motion, manual target movement, synthetic camera-frame generation, Gaussian noise, haze, and salt-and-pepper noise.
+- `src/cv_tracker/cv_tracker.c/.h`: bright-target detection, connected-component filtering, motion estimation, prediction, adaptive ROI, PID control, confidence, and lost-target state.
+- `src/types/types.h`: shared configuration, simulation state, frame buffer, tracker result, and profiler data structures.
+- `src/renderer/renderer.c/.h`: dashboard layout, global-world map, camera feed, tracking overlays, telemetry, and visual status.
+- `src/gui/gui.c/.h`: lightweight SDL controls, sliders, toggles, buttons, active mode buttons, and logical mouse-coordinate handling.
+- `src/profiler/profiler.c/.h`: frame and pipeline timing measurements.
+- `src/predictor_bridge/predictor_bridge.c/.h`: optional non-blocking C/Python UDP interface.
 - `predictor.py`: optional asynchronous constant-velocity or TorchScript motion predictor.
 - `tests/test_cv_tracker.c`: focused regression test for detection, target loss, prediction, noise rejection, direction selection, and reacquisition.
 - `Makefile`: Linux SDL3 build and clean commands.

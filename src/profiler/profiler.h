@@ -1,7 +1,7 @@
 #ifndef PROFILER_H
 #define PROFILER_H
 
-#include "types.h"
+#include "types/types.h"
 
 typedef enum ProfilerLayer {
     PROFILER_VIDEO = 0,

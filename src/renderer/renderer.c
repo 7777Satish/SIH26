@@ -1,6 +1,6 @@
-#include "renderer.h"
-#include "gui.h"
-#include "profiler.h"
+#include "renderer/renderer.h"
+#include "gui/gui.h"
+#include "profiler/profiler.h"
 #include <stdio.h>
 #include <stdint.h>
 

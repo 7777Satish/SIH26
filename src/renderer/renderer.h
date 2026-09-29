@@ -2,7 +2,7 @@
 #define RENDERER_H
 
 #include <SDL3/SDL.h>
-#include "types.h"
+#include "types/types.h"
 
 SDL_Texture *Renderer_CreateFeedTexture(SDL_Renderer *renderer);
 void Renderer_DestroyFeedTexture(SDL_Texture *texture);

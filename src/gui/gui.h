@@ -3,7 +3,7 @@
 
 #include <SDL3/SDL.h>
 #include <stdbool.h>
-#include "types.h"
+#include "types/types.h"
 
 void GUI_Begin(SDL_Renderer *renderer);
 bool GUI_Button(SDL_Renderer *renderer, int x, int y, int width, int height, const char *label);

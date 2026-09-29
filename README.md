@@ -49,7 +49,7 @@ From the repository root:
 make
 ```
 
-This compiles every C source file in `src/` with the following default options:
+This compiles every C source file under the module directories in `src/` with the following default options:
 
 ```text
 -std=c11 -Wall -Wextra -Wpedantic -O2
@@ -154,14 +154,14 @@ make clean && make
 ## Project Layout
 
 ```text
-src/main.c         Application loop, SDL setup, and simulation wiring
-src/video_gen.c    Synthetic target motion and grayscale frame generation
-src/cv_tracker.c   Bright-pixel centroid detection and PID-style control
-src/renderer.c     SDL dashboard and camera-feed rendering
-src/gui.c          Lightweight dashboard controls and labels
-src/profiler.c     Frame and pipeline timing measurements
-src/types.h        Shared simulation data structures and constants
-src/predictor_bridge.c  Optional non-blocking C/Python predictor bridge
+src/app/main.c                         Application loop, SDL setup, and simulation wiring
+src/video_gen/video_gen.c/.h           Synthetic target motion and grayscale frame generation
+src/cv_tracker/cv_tracker.c/.h         Bright-pixel centroid detection and PID-style control
+src/renderer/renderer.c/.h             SDL dashboard and camera-feed rendering
+src/gui/gui.c/.h                       Lightweight dashboard controls and labels
+src/profiler/profiler.c/.h             Frame and pipeline timing measurements
+src/types/types.h                      Shared simulation data structures and constants
+src/predictor_bridge/predictor_bridge.c/.h  Optional non-blocking C/Python predictor bridge
 predictor.py       Asynchronous constant-velocity/PyTorch predictor
 Makefile           Build and clean targets
 ```

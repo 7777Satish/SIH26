@@ -1,4 +1,4 @@
-#include "gui.h"
+#include "gui/gui.h"
 #include <stdio.h>
 
 static float mouse_x;

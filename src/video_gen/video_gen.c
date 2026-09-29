@@ -1,4 +1,4 @@
-#include "video_gen.h"
+#include "video_gen/video_gen.h"
 #include <math.h>
 #include <stdint.h>
 

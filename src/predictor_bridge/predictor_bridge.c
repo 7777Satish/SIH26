@@ -1,4 +1,4 @@
-#include "predictor_bridge.h"
+#include "predictor_bridge/predictor_bridge.h"
 
 #include <stdio.h>
 #include <stdlib.h>

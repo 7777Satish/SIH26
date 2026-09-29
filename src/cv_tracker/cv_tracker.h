@@ -1,7 +1,7 @@
 #ifndef CV_TRACKER_H
 #define CV_TRACKER_H
 
-#include "types.h"
+#include "types/types.h"
 
 void CVTracker_Reset(void);
 void CVTracker_SetExternalPrediction(float x, float y, float confidence);
