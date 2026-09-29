@@ -18,6 +18,7 @@ static const char *const *dropdown_options;
 static int dropdown_option_count;
 static int *dropdown_selected;
 
+
 static void rounded_fill(SDL_Renderer *renderer, float x, float y, float width, float height, float radius, SDL_Color color)
 {
     GUI_SetColor(renderer, color);
