@@ -8,6 +8,7 @@
 #include <stdio.h>
 
 static uint8_t feed_rgba[FRAME_PIXELS * 4];
+static uint8_t environment_rgba[VIDEO_ENV_PIXELS * 4];
 static TTF_Font *poppins_font;
 static SDL_Texture *icon_close;
 static SDL_Texture *icon_minimize;
@@ -299,6 +300,13 @@ SDL_Texture *Renderer_CreateFeedTexture(SDL_Renderer *renderer)
     return texture;
 }
 
+SDL_Texture *Renderer_CreateEnvironmentTexture(SDL_Renderer *renderer)
+{
+    SDL_Texture *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING, VIDEO_ENV_WIDTH, VIDEO_ENV_HEIGHT);
+    if (texture != NULL) SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_LINEAR);
+    return texture;
+}
+
 void Renderer_DestroyFeedTexture(SDL_Texture *texture)
 {
     SDL_DestroyTexture(texture);
@@ -315,9 +323,15 @@ void Renderer_DestroyFeedTexture(SDL_Texture *texture)
     TTF_Quit();
 }
 
-void Renderer_DrawDashboard(SDL_Renderer *renderer, SDL_Texture *feed_texture, const FrameBuffer_t *frame, SimConfig_t *config, SimState_t *state, const CVResult_t *cv, const ProfilerState_t *profiler, float fps)
+void Renderer_DestroyEnvironmentTexture(SDL_Texture *texture)
+{
+    SDL_DestroyTexture(texture);
+}
+
+void Renderer_DrawDashboard(SDL_Renderer *renderer, SDL_Window *window, SDL_Texture *feed_texture, SDL_Texture *environment_texture, const FrameBuffer_t *frame, const EnvironmentFrame_t *environment, SimConfig_t *config, SimState_t *state, const CVResult_t *cv, const ProfilerState_t *profiler, VideoSource_t *video_source, float fps)
 {
     char text[128];
+    const bool custom_video = config->video_source_mode == VIDEO_SOURCE_CUSTOM && video_source->active;
     for (int i = 0; i < FRAME_PIXELS; ++i) {
         const uint8_t value = frame->pixels[i];
         feed_rgba[i * 4] = value;
@@ -326,6 +340,16 @@ void Renderer_DrawDashboard(SDL_Renderer *renderer, SDL_Texture *feed_texture, c
         feed_rgba[i * 4 + 3] = 255;
     }
     SDL_UpdateTexture(feed_texture, NULL, feed_rgba, FRAME_WIDTH * 4);
+    if (custom_video) {
+        for (int i = 0; i < VIDEO_ENV_PIXELS; ++i) {
+            const uint8_t value = environment->pixels[i];
+            environment_rgba[i * 4] = value;
+            environment_rgba[i * 4 + 1] = value;
+            environment_rgba[i * 4 + 2] = value;
+            environment_rgba[i * 4 + 3] = 255;
+        }
+        SDL_UpdateTexture(environment_texture, NULL, environment_rgba, VIDEO_ENV_WIDTH * 4);
+    }
 
     const WorkspaceLayout_t layout = workspace_layout(renderer);
     const float pad = max_float(16.0f, min_float(layout.width, layout.height) * 0.021f);
@@ -363,17 +387,22 @@ void Renderer_DrawDashboard(SDL_Renderer *renderer, SDL_Texture *feed_texture, c
     GUI_Dropdown(renderer, (int)left_inner, (int)(content_y + 304.0f * rail_scale), (int)left_width, 32, MOTION_PATTERNS[config->motion_pattern], MOTION_PATTERNS, 3, (int *)&config->motion_pattern, 2);
     divider(renderer, left_inner, content_y + 354.0f * rail_scale, left_width);
     section(renderer, left_inner, content_y + 378.0f * rail_scale, "DISTURBANCES & NOISE");
-    text_at(renderer, left_inner, content_y + 394.0f * rail_scale, "Image Noise", COLOR_MUTED);
-    GUI_Slider(renderer, (int)left_inner, (int)(content_y + 418.0f * rail_scale), (int)left_width, "", &config->noise_intensity, 0.0f, 100.0f);
-    GUI_Checkbox(renderer, (int)left_inner, (int)(content_y + 456.0f * rail_scale), "Salt&P", &config->salt_pepper_noise);
-    GUI_Checkbox(renderer, (int)(left_inner + left_width * 0.46f), (int)(content_y + 456.0f * rail_scale), "Gauss", &config->gaussian_noise);
-    GUI_Checkbox(renderer, (int)(left_inner + left_width * 0.82f), (int)(content_y + 456.0f * rail_scale), "Poisson", &config->poisson_noise);
-    text_at(renderer, left_inner, content_y + 492.0f * rail_scale, "Atmosphere", COLOR_MUTED);
-    text_at(renderer, left_inner + left_width * 0.82f, content_y + 492.0f * rail_scale, "Haze", COLOR_LIME);
-    if (GUI_ChoiceButton(renderer, (int)left_inner, (int)(content_y + 516.0f * rail_scale), (int)(left_width / 3.0f), 26, "Clear", config->haze_level == 0.0f)) config->haze_level = 0.0f;
-    if (GUI_ChoiceButton(renderer, (int)(left_inner + left_width / 3.0f), (int)(content_y + 516.0f * rail_scale), (int)(left_width / 3.0f), 26, "Haze", config->haze_level > 0.0f && config->haze_level < 0.4f)) config->haze_level = 0.12f;
-    if (GUI_ChoiceButton(renderer, (int)(left_inner + left_width * 2.0f / 3.0f), (int)(content_y + 516.0f * rail_scale), (int)(left_width / 3.0f), 26, "Fog", config->haze_level >= 0.4f)) config->haze_level = 0.5f;
-    GUI_Slider(renderer, (int)left_inner, (int)(content_y + 566.0f * rail_scale), (int)left_width, "Platform Jitter", &config->platform_jitter, 0.0f, 40.0f);
+    if (custom_video) {
+        text_at(renderer, left_inner, content_y + 418.0f * rail_scale, "Disabled for imported video", COLOR_MUTED);
+        text_at(renderer, left_inner, content_y + 450.0f * rail_scale, "Source frames are used unchanged", COLOR_MUTED);
+    } else {
+        text_at(renderer, left_inner, content_y + 394.0f * rail_scale, "Image Noise", COLOR_MUTED);
+        GUI_Slider(renderer, (int)left_inner, (int)(content_y + 418.0f * rail_scale), (int)left_width, "", &config->noise_intensity, 0.0f, 100.0f);
+        GUI_Checkbox(renderer, (int)left_inner, (int)(content_y + 456.0f * rail_scale), "Salt&P", &config->salt_pepper_noise);
+        GUI_Checkbox(renderer, (int)(left_inner + left_width * 0.46f), (int)(content_y + 456.0f * rail_scale), "Gauss", &config->gaussian_noise);
+        GUI_Checkbox(renderer, (int)(left_inner + left_width * 0.82f), (int)(content_y + 456.0f * rail_scale), "Poisson", &config->poisson_noise);
+        text_at(renderer, left_inner, content_y + 492.0f * rail_scale, "Atmosphere", COLOR_MUTED);
+        text_at(renderer, left_inner + left_width * 0.82f, content_y + 492.0f * rail_scale, "Haze", COLOR_LIME);
+        if (GUI_ChoiceButton(renderer, (int)left_inner, (int)(content_y + 516.0f * rail_scale), (int)(left_width / 3.0f), 26, "Clear", config->haze_level == 0.0f)) config->haze_level = 0.0f;
+        if (GUI_ChoiceButton(renderer, (int)(left_inner + left_width / 3.0f), (int)(content_y + 516.0f * rail_scale), (int)(left_width / 3.0f), 26, "Haze", config->haze_level > 0.0f && config->haze_level < 0.4f)) config->haze_level = 0.12f;
+        if (GUI_ChoiceButton(renderer, (int)(left_inner + left_width * 2.0f / 3.0f), (int)(content_y + 516.0f * rail_scale), (int)(left_width / 3.0f), 26, "Fog", config->haze_level >= 0.4f)) config->haze_level = 0.5f;
+        GUI_Slider(renderer, (int)left_inner, (int)(content_y + 566.0f * rail_scale), (int)left_width, "Platform Jitter", &config->platform_jitter, 0.0f, 40.0f);
+    }
     const int footer_y = (int)(content_y + layout.main_height - pad - 32.0f);
     if (GUI_Button(renderer, (int)left_inner, footer_y, (int)(left_width * 0.58f), 28, "Reset Configuration")) reset_configuration(config, state);
     GUI_Toggle(renderer, (int)(left_inner + left_width * 0.62f), footer_y + 4, "Manual", &config->manual_target);
@@ -382,6 +411,12 @@ void Renderer_DrawDashboard(SDL_Renderer *renderer, SDL_Texture *feed_texture, c
     panel(renderer, (SDL_FRect){ center_x + pad, content_y + pad, layout.center - pad * 2.0f, 42.0f }, COLOR_SURFACE_RAISED);
     if (GUI_ChoiceButton(renderer, (int)(center_x + pad + 12.0f), (int)(content_y + pad + 8.0f), 76, 26, "Camera", !environment_view)) environment_view = false;
     if (GUI_ChoiceButton(renderer, (int)(center_x + pad + 102.0f), (int)(content_y + pad + 8.0f), 88, 26, "Environment", environment_view)) environment_view = true;
+    if (GUI_ChoiceButton(renderer, (int)(center_x + pad + 202.0f), (int)(content_y + pad + 8.0f), 64, 26, "Live", !custom_video)) config->video_source_mode = VIDEO_SOURCE_SYNTHETIC;
+    if (GUI_ChoiceButton(renderer, (int)(center_x + pad + 274.0f), (int)(content_y + pad + 8.0f), 64, 26, "Video", custom_video)) {
+        if (video_source->active) config->video_source_mode = VIDEO_SOURCE_CUSTOM;
+        else VideoSource_RequestOpen(window, video_source);
+    }
+    if (GUI_Button(renderer, (int)(center_x + pad + 346.0f), (int)(content_y + pad + 8.0f), 72, 26, "Import")) VideoSource_RequestOpen(window, video_source);
     if (GUI_ChoiceButton(renderer, (int)(center_x + layout.center - 112.0f), (int)(content_y + pad + 8.0f), 42, 26, "100%", !fit_view)) fit_view = false;
     if (GUI_ChoiceButton(renderer, (int)(center_x + layout.center - 58.0f), (int)(content_y + pad + 8.0f), 42, 26, "Fit", fit_view)) fit_view = true;
     const float map_x = center_x + pad;
@@ -391,6 +426,7 @@ void Renderer_DrawDashboard(SDL_Renderer *renderer, SDL_Texture *feed_texture, c
     GUI_SetColor(renderer, (SDL_Color){ 20, 10, 16, 255 });
     SDL_RenderFillRect(renderer, &(SDL_FRect){ map_x, map_y, map_width, map_height });
     if (!environment_view) SDL_RenderTexture(renderer, feed_texture, NULL, &(SDL_FRect){ map_x, map_y, map_width, map_height });
+    if (environment_view && custom_video) SDL_RenderTexture(renderer, environment_texture, NULL, &(SDL_FRect){ map_x, map_y, map_width, map_height });
     GUI_SetColor(renderer, COLOR_GRID);
     for (int grid = 1; grid < 10 && overlay_grid; ++grid) {
         const float x = map_x + map_width * grid / 10.0f;
@@ -399,6 +435,18 @@ void Renderer_DrawDashboard(SDL_Renderer *renderer, SDL_Texture *feed_texture, c
         if (grid < 8) SDL_RenderLine(renderer, map_x, y, map_x + map_width, y);
     }
     if (environment_view) {
+        if (custom_video) {
+            const float fit_scale = min_float(map_width / VIDEO_ENV_WIDTH, map_height / VIDEO_ENV_HEIGHT);
+            const float map_scale = fit_view ? fit_scale : fit_scale * 1.25f;
+            const float map_origin_x = map_x + (map_width - VIDEO_ENV_WIDTH * map_scale) * 0.5f;
+            const float map_origin_y = map_y + (map_height - VIDEO_ENV_HEIGHT * map_scale) * 0.5f;
+            const float camera_x = map_origin_x + (state->camera_pan - FRAME_WIDTH * 0.5f) * map_scale;
+            const float camera_y = map_origin_y + (state->camera_tilt - FRAME_HEIGHT * 0.5f) * map_scale;
+            const SDL_FRect camera_frame = { camera_x, camera_y, FRAME_WIDTH * map_scale, FRAME_HEIGHT * map_scale };
+            GUI_SetColor(renderer, COLOR_LIME);
+            SDL_RenderRect(renderer, &camera_frame);
+            text_at(renderer, map_x + 10.0f, map_y + 10.0f, cv->detected ? "TRACKING LOCK" : "SEARCHING", cv->detected ? COLOR_LIME : COLOR_YELLOW);
+        } else {
         const float fit_scale = min_float(map_width / WORLD_SIZE, map_height / WORLD_SIZE);
         const float map_scale = fit_view ? fit_scale : fit_scale * 1.25f;
         const float map_origin_x = map_x + (map_width - WORLD_SIZE * map_scale) * 0.5f;
@@ -413,6 +461,7 @@ void Renderer_DrawDashboard(SDL_Renderer *renderer, SDL_Texture *feed_texture, c
         GUI_SetColor(renderer, COLOR_LIME);
         SDL_RenderFillRect(renderer, &(SDL_FRect){ target_x - 9.0f, target_y - 9.0f, 18.0f, 18.0f });
         text_at(renderer, map_x + 10.0f, map_y + 10.0f, cv->detected ? "TRACKING LOCK" : "SEARCHING", cv->detected ? COLOR_LIME : COLOR_YELLOW);
+        }
     }
     if (!environment_view && overlay_box && cv->detected) {
         const float detected_x = map_x + cv->centroid_x * map_width / FRAME_WIDTH;
@@ -420,6 +469,19 @@ void Renderer_DrawDashboard(SDL_Renderer *renderer, SDL_Texture *feed_texture, c
         GUI_SetColor(renderer, COLOR_LIME);
         SDL_RenderRect(renderer, &(SDL_FRect){ detected_x - 12.0f, detected_y - 12.0f, 24.0f, 24.0f });
         if (overlay_error) SDL_RenderLine(renderer, map_x + map_width * 0.5f, map_y + map_height * 0.5f, detected_x, detected_y);
+    }
+    if (environment_view && custom_video && overlay_box && cv->detected) {
+        const float fit_scale = min_float(map_width / VIDEO_ENV_WIDTH, map_height / VIDEO_ENV_HEIGHT);
+        const float map_scale = fit_view ? fit_scale : fit_scale * 1.25f;
+        const float map_origin_x = map_x + (map_width - VIDEO_ENV_WIDTH * map_scale) * 0.5f;
+        const float map_origin_y = map_y + (map_height - VIDEO_ENV_HEIGHT * map_scale) * 0.5f;
+        const float detected_x = map_origin_x + (state->camera_pan - FRAME_WIDTH * 0.5f + cv->centroid_x) * map_scale;
+        const float detected_y = map_origin_y + (state->camera_tilt - FRAME_HEIGHT * 0.5f + cv->centroid_y) * map_scale;
+        GUI_SetColor(renderer, COLOR_LIME);
+        SDL_RenderRect(renderer, &(SDL_FRect){ detected_x - 8.0f, detected_y - 8.0f, 16.0f, 16.0f });
+    }
+    if (config->video_source_mode == VIDEO_SOURCE_CUSTOM && !custom_video) {
+        text_at(renderer, map_x + 10.0f, map_y + 10.0f, "VIDEO LOAD FAILED - SELECT ANOTHER FILE", COLOR_RED);
     }
 
     section_panel(renderer, (SDL_FRect){ center_x, content_y + camera_height + layout.gap, layout.center, timeline_height }, COLOR_SURFACE);
@@ -482,7 +544,7 @@ void Renderer_DrawDashboard(SDL_Renderer *renderer, SDL_Texture *feed_texture, c
     snprintf(text, sizeof(text), "%.0f%%", cv->confidence * 100.0f); metric(renderer, right_inner, content_y + 432.0f * rail_scale, right_width, "Detection Confidence", text, cv->detected ? "Nominal" : "Searching", !cv->detected);
     snprintf(text, sizeof(text), "%.1f px", cv->pixel_error); metric(renderer, right_inner, content_y + 492.0f * rail_scale, right_width, "Tracking Error", text, cv->pixel_error < 10.0f ? "Nominal" : "Outside tolerance", cv->pixel_error >= 10.0f);
     snprintf(text, sizeof(text), "%.1f ms", profiler->milliseconds[PROFILER_CV]); metric(renderer, right_inner, content_y + 552.0f * rail_scale, right_width, "Acquisition", text, "Fast lock", false);
-    text_at(renderer, right_inner, content_y + layout.main_height - 28.0f, cv->detected ? "Active Lock" : "Searching", COLOR_LIME);
+    text_at(renderer, right_inner, content_y + layout.main_height - 28.0f, custom_video ? "Custom Video" : (cv->detected ? "Active Lock" : "Searching"), COLOR_LIME);
     snprintf(text, sizeof(text), "%.1f Hz", fps); text_at(renderer, right_inner + right_width - 56.0f, content_y + layout.main_height - 28.0f, text, COLOR_MUTED);
     GUI_DrawDropdownOverlay(renderer);
     SDL_RenderPresent(renderer);

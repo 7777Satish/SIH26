@@ -12,6 +12,7 @@ The project currently targets Linux and requires:
 - GNU Make
 - `pkg-config`
 - SDL3 development files, including the `sdl3` pkg-config module
+- FFmpeg available as the `ffmpeg` command for custom video playback
 - The system math library (`libm`, normally included with the standard C toolchain)
 - Python 3.10 or newer for the optional asynchronous predictor
 - PyTorch only when loading a TorchScript prediction model; the fallback needs no Python packages
@@ -25,6 +26,12 @@ Install the build tools and SDL3 development package:
 ```sh
 sudo apt update
 sudo apt install build-essential pkg-config libsdl3-dev
+```
+
+For custom video playback, also install FFmpeg:
+
+```sh
+sudo apt install ffmpeg
 ```
 
 If `libsdl3-dev` is not available in your distribution release, install SDL3 from the official SDL release packages or build it from source, then ensure its `sdl3.pc` file is in a directory searched by `pkg-config`.
@@ -92,6 +99,12 @@ Start the dashboard with:
 ./virtual_camera
 ```
 
+For a deterministic WSL test without opening the file picker, pass a Linux or WSL-mounted video path:
+
+```sh
+./virtual_camera /mnt/d/path/to/video.mp4
+```
+
 The executable is built for Linux. From Windows, run both commands inside WSL
 (WSLg is required for the SDL window):
 
@@ -108,6 +121,8 @@ The application opens an SDL window at 1490 x 820 pixels. Use the controls in th
 - **Max Pan** and **Max Tilt** limit controller output speed.
 - **Linear Path**, **Circular Orbit**, and **Random Walk** select the target motion pattern.
 - **Manual Target** pauses automatic motion; hold the arrow keys or `WASD` to move the target through the world.
+- **Import** opens a video file picker. **Video** activates the selected file, and **Live** returns to the synthetic environment.
+- Custom video is decoded into the same 2000 x 2000 grayscale environment used by simulation, with aspect-ratio-preserving letterboxing. The simulated camera keeps its fixed 640 x 480 sensor and crops a moving viewport from that environment, so camera and projection dimensions remain consistent between modes. Only the crop is sent to CV tracking. Synthetic noise, haze, and platform jitter controls are disabled in this mode.
 
 Close the window or press `Escape` to exit.
 The window can be resized freely; press `F11` to toggle fullscreen. The dashboard
@@ -166,14 +181,14 @@ predictor.py       Asynchronous constant-velocity/PyTorch predictor
 Makefile           Build and clean targets
 ```
 
-The simulation uses a deterministic internal pseudo-random generator for generated noise. No webcam, video file, network connection, or external runtime asset is required.
+The simulation uses a deterministic internal pseudo-random generator for generated noise. No webcam or network connection is required. Custom video mode invokes FFmpeg as a child process and streams decoded grayscale frames without temporary files.
 
 ## Build Pipeline
 
 Each frame follows this path:
 
-1. Update the target position according to the selected motion pattern.
-2. Generate the grayscale camera frame and add enabled disturbances.
+1. Update the target position and generate the synthetic camera frame, or read the next decoded custom-video frame.
+2. Add enabled disturbances only in synthetic mode; imported frames are used unchanged.
 3. Search an adaptive predicted-position ROI and expand it for recovery when detection is lost.
 4. Update the C state estimator and project the target across measured frame latency.
 5. Optionally accept a high-confidence asynchronous Python prediction.

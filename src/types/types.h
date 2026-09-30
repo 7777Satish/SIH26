@@ -8,6 +8,9 @@
 #define FRAME_WIDTH 640
 #define FRAME_HEIGHT 480
 #define FRAME_PIXELS (FRAME_WIDTH * FRAME_HEIGHT)
+#define VIDEO_ENV_WIDTH 2000
+#define VIDEO_ENV_HEIGHT 2000
+#define VIDEO_ENV_PIXELS (VIDEO_ENV_WIDTH * VIDEO_ENV_HEIGHT)
 #define PROFILER_LAYER_COUNT 4
 
 typedef enum MotionPattern {
@@ -33,6 +36,11 @@ typedef enum TargetShape {
     TARGET_WIDE
 } TargetShape_t;
 
+typedef enum VideoSourceMode {
+    VIDEO_SOURCE_SYNTHETIC = 0,
+    VIDEO_SOURCE_CUSTOM
+} VideoSourceMode_t;
+
 typedef struct SimConfig {
     float target_speed;
     float platform_jitter;
@@ -51,6 +59,7 @@ typedef struct SimConfig {
     TargetMode_t target_mode;
     TargetPosition_t target_position;
     TargetShape_t target_shape;
+    VideoSourceMode_t video_source_mode;
 } SimConfig_t;
 
 typedef struct SimState {
@@ -68,6 +77,12 @@ typedef struct FrameBuffer {
     int width;
     int height;
 } FrameBuffer_t;
+
+typedef struct EnvironmentFrame {
+    uint8_t pixels[VIDEO_ENV_PIXELS];
+    int width;
+    int height;
+} EnvironmentFrame_t;
 
 typedef struct CVResult {
     float centroid_x;
